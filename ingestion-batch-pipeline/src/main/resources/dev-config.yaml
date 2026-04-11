@@ -1,0 +1,58 @@
+app:
+  name: ingestion-service
+
+scheduler:
+  cron: "0 0 4 * * ?"
+  tzone: "Asia/Kolkata"
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8089"
+    read-path: "/read"
+    email-path: "/email"
+
+file:
+  entity: "inventory"
+  input:
+    directory: "inbox"
+    file-name: "inventory.csv"
+    path: "inbox/inventory.csv"
+  output:
+    directory: "outbound"
+    test-prefix: "test-ram"
+
+database:
+  sqlserver:
+    host: "mule-project.database.windows.net"
+    port: "1433"
+    user: "project-admin"
+    name: "mule-test-db"
+
+email:
+  smtp:
+    host: "smtp.gmail.com"
+    port: "587"
+    user: "vivekvishal70777@gmail.com"
+    starttls-required: "true"
+  notification:
+    from-address: "vivekvishal70777@gmail.com"
+    to-address: "vivekvishal0034@gmail.com"
+    subject: "Batch Status"
+
+sftp:
+  host: "ap-southeast-1.sftpcloud.io"
+  port: "22"
+  username: "5920c005d0b747bbb5510bb87d824a6e"
+  working-dir: "SFTP/"
+  input-directory: "inbox/"
+  input-filename: "inventory.csv"
+  archive-directory: "archive/"
+  output-directory: "outbound/"
+  output-directory-error: "outbound/error/"
+query:
+  insert-success-record: "INSERT INTO InventoryBatch (SKU, StoreId, Type, Quantity, Timestamp, BatchId, Starttime) VALUES (:SKU, :StoreId, :Type, :Quantity, :Timestamp, :BatchId, :StartTime)"
+  insert-failure-record: "INSERT INTO InventoryBatchError (SKU, StoreId, Type, Quantity, Timestamp, BatchId,Starttime,ErrorDescription) VALUES (:SKU, :StoreId, :Type, :Quantity, :Timestamp, :BatchId,:StartTime, :ErrorDescription)"
+  distinct-storeid: "select distinct StoreId from InventoryBatch where BatchId = :batchId"
+  fetch-success-record: "select SKU, StoreId, Type, Quantity, Timestamp from InventoryBatch where BatchId = :batchId and StoreId = :storeId"
+  fetch-failure-record: "select SKU, StoreId, Type, Quantity, Timestamp from InventoryBatchError where BatchId = :batchId"
+  count-failure-record: "select count(BatchId) as totalRecord from InventoryBatchError where BatchId = :batchId"

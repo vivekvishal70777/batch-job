@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <sub-flow name="initialize-batch-context-sub-flow">
+		<logger level="INFO" doc:name="Start" doc:id="b5002ca1-beef-4f83-923f-d30341322dd8" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |Start']" />
+		<ee:transform doc:name="Set Start Time And Batch Id" doc:id="db261cdd-a028-4fe5-90ca-4afe4620b0f6">
+            <ee:message >
+			</ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="startTime"><![CDATA[%dw 2.0
+output application/java
+---
+(now() >> "Asia/Kolkata") as String {format: "dd-MM-yyyy HH:mm:ss"}]]></ee:set-variable>
+                <ee:set-variable variableName="batchId"><![CDATA[%dw 2.0
+output application/java
+---
+uuid()]]></ee:set-variable>
+				<ee:set-variable variableName="path" ><![CDATA[%dw 2.0
+output application/java
+---
+p('sftp.input-directory') ++ p('sftp.input-filename')]]></ee:set-variable>
+            
+</ee:variables>
+        </ee:transform>
+		<set-payload value="#[{ 	headerLine: &quot;Batch Started&quot;,&#10;    batch: vars.batchId,                	&#10;    message: &quot;Batch started for the entity &quot; ++ p('file.entity') ++&quot;.&quot;,&#10;    filePath: p('sftp.working-dir') ++ vars.path as String,&#10;    timestamp: now() as String&#10;                }]" doc:name="Set mail body" doc:id="1779d98b-5fb0-4890-860a-075f48e7de46" />
+		<flow-ref doc:name="Call send-email-sub-flow" doc:id="ac3bbec0-7f6b-49fb-b3f8-f862ef94e8f7" name="send-email-sub-flow"/>
+		<logger level="INFO" doc:name="End" doc:id="98f780b2-95cf-4fa9-b7a5-4b538c0c807f" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |End']" />
+    
+</sub-flow>
+
+    <sub-flow name="validate-record-sub-flow">
+		<ee:transform doc:name="Evaluate Record Validation">
+            <ee:message />
+            <ee:variables>
+                <ee:set-variable variableName="isValidRecord"><![CDATA[%dw 2.0
+output application/java
+
+---
+ (!((valuesOf(payload) contains "") or (valuesOf(payload) contains null)) and
+ 
+ ( ["Backorder","Standard"] contains payload.'Type') and 
+
+(isInteger(payload.Quantity as Number) default false) and 
+
+((payload.Quantity as Number  default -1) >-1)
+)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice doc:name="Validation Choice">
+            <when expression="#[(vars.isValidRecord == false)]">
+				<raise-error doc:name="Raise Validation Error" type="CUSTOM:VALIDATION_CHECK" description="Validation failed" />
+            
+</when>
+        
+</choice>
+    
+</sub-flow>
+
+    <sub-flow name="attach-error-description-sub-flow">
+		<ee:transform doc:name="Set Error Description">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {
+    ErrorDescription: "Validation Error, Check Constraints:  All fields are mandatory, Quantity must be a whole number, and Type must be Standard or Backorder"
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    
+</sub-flow>
+
+</mule>

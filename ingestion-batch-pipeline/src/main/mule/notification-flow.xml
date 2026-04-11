@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:ftp="http://www.mulesoft.org/schema/mule/ftp"
+      xmlns:email="http://www.mulesoft.org/schema/mule/email"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:file="http://www.mulesoft.org/schema/mule/file"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+        http://www.mulesoft.org/schema/mule/ftp http://www.mulesoft.org/schema/mule/ftp/current/mule-ftp.xsd
+        http://www.mulesoft.org/schema/mule/email http://www.mulesoft.org/schema/mule/email/current/mule-email.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<sub-flow name="send-email-sub-flow" doc:id="0c3b1dbe-6be4-4105-8110-d7aa57cfa34e" >
+		<choice doc:name="Choice" doc:id="656913b3-b7bc-40b1-aaca-9b565ccea7b3" >
+			<when expression="#[payload.success == false]">
+				<parse-template doc:name="Parse Template" doc:id="ac74637b-1b56-4e3d-937b-d0d70f5e78bc" location="html/error-template.html" targetValue="#[payload]">
+		</parse-template>
+			</when>
+			<otherwise >
+				<parse-template doc:name="Parse Template" doc:id="f6c74994-dc17-408e-acac-a15d360fec37" location="html/mail-template.html" targetValue="#[payload]" />
+			</otherwise>
+		</choice>
+		<email:send doc:name="Send" doc:id="567ee451-c311-42a7-8c97-198eed27f273" config-ref="email-smtp-config" fromAddress="${email.notification.from-address}" subject="${email.notification.subject}">
+			<email:to-addresses >
+				<email:to-address value="${email.notification.to-address}" />
+			</email:to-addresses>
+			<email:body contentType="text/html" />
+		</email:send>
+	</sub-flow>
+
+</mule>

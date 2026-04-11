@@ -1,0 +1,11 @@
+database:
+  sqlserver:
+    password: "![bUaUjxT0+uANES3HhmwXkQ==]"
+
+
+email:
+  smtp:
+    password: "![+raoe+RK2CAvs8FKFnXZNGNo5AcxeqLZ]"
+
+sftp:
+  password: "![Uok1Ev7bvbjYi84olI539NP8Z1H8Z9NDz8snaDbjYIW3/yXG5WNUOw==]"

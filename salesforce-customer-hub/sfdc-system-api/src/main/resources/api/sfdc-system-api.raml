@@ -1,0 +1,174 @@
+#%RAML 1.0
+title: Salesforce System API
+version: v1
+baseUri: http://localhost:8083/api/{version}
+mediaType: application/json
+protocols: [HTTPS, HTTP]
+
+description: |
+  System API for Salesforce Sales Cloud. Process APIs must not call Salesforce directly.
+  Live mode uses OAuth + REST/Composite/Bulk 2.0. Mock mode is for local and MUnit.
+
+types:
+  Error:
+    properties:
+      correlationId: string
+      apiName: string
+      errorCode: string
+      httpStatus: integer
+      message: string
+      timestamp: datetime
+  Address:
+    properties:
+      city?: string
+      state?: string
+      country?: string
+      postalCode?: string
+  AccountCreate:
+    properties:
+      name:
+        type: string
+        required: true
+      type?: string
+      industry?: string
+      billing?: Address
+  ContactCreate:
+    properties:
+      firstName?: string
+      lastName:
+        type: string
+        required: true
+      email?: string
+      phone?: string
+      accountId?: string
+  CompositeAccountContact:
+    properties:
+      account: AccountCreate
+      contact: ContactCreate
+  CaseCreate:
+    properties:
+      accountId: string
+      subject: string
+      description?: string
+      origin?: string
+      priority?: string
+  BulkRequest:
+    properties:
+      objectType:
+        type: string
+        default: Account
+      operation:
+        type: string
+        default: upsert
+      externalIdField?: string
+      records: array
+
+traits:
+  correlated:
+    headers:
+      X-Correlation-Id?:
+        type: string
+
+/accounts:
+  is: [correlated]
+  post:
+    description: Create Account (Salesforce sobjects/Account)
+    body:
+      type: AccountCreate
+    responses:
+      201:
+        body:
+          application/json:
+      400:
+        body:
+          application/json:
+            type: Error
+  /{accountId}:
+    is: [correlated]
+    uriParameters:
+      accountId: string
+    get:
+      responses:
+        200:
+          body:
+            application/json:
+        404:
+          body:
+            application/json:
+              type: Error
+    patch:
+      body:
+        type: AccountCreate
+      responses:
+        200:
+          body:
+            application/json:
+    /contacts:
+      get:
+        description: Contacts for an Account (SOQL)
+        responses:
+          200:
+            body:
+              application/json:
+
+/composite:
+  /account-contact:
+    is: [correlated]
+    post:
+      description: Salesforce Composite — Account then Contact
+      body:
+        type: CompositeAccountContact
+      responses:
+        201:
+          body:
+            application/json:
+
+/cases:
+  is: [correlated]
+  get:
+    queryParameters:
+      accountId:
+        type: string
+        required: true
+    responses:
+      200:
+        body:
+          application/json:
+  post:
+    body:
+      type: CaseCreate
+    responses:
+      201:
+        body:
+          application/json:
+
+/query:
+  is: [correlated]
+  post:
+    description: Constrained SOQL passthrough (SELECT only)
+    body:
+      properties:
+        q: string
+    responses:
+      200:
+        body:
+          application/json:
+
+/bulk:
+  /accounts:
+    is: [correlated]
+    post:
+      description: Bulk 2.0 ingest (mock returns job id; live submits ingest)
+      body:
+        type: BulkRequest
+      responses:
+        202:
+          body:
+            application/json:
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:

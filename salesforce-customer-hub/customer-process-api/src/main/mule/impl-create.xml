@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <flow name="post:\customers:customer-process-api-config">
+        <set-variable variableName="canonicalRequest" value="#[payload]"/>
+        <set-variable variableName="idempotencyKey"
+                      value="#[attributes.headers['idempotency-key'] default attributes.headers['Idempotency-Key'] default '']"/>
+        <ee:transform>
+            <ee:set-variable variableName="payloadHash" resource="dwl/payload-hash.dwl"/>
+        </ee:transform>
+        <choice>
+            <when expression="#[!isEmpty(vars.idempotencyKey)]">
+                <try>
+                    <os:retrieve key="#[vars.idempotencyKey]" objectStore="idempotency-store" target="prior"/>
+                    <choice>
+                        <when expression="#[vars.prior.hash == vars.payloadHash]">
+                            <set-payload value="#[vars.prior.response]" mimeType="application/json"/>
+                            <set-variable variableName="httpStatus" value="#[vars.prior.httpStatus default 201]"/>
+                            <set-variable variableName="shortCircuit" value="true"/>
+                        </when>
+                        <otherwise>
+                            <raise-error type="CUSTOM:IDEMPOTENCY_CONFLICT" description="Idempotency-Key reused with a different payload"/>
+                        </otherwise>
+                    </choice>
+                    <error-handler>
+                        <on-error-continue type="OS:KEY_NOT_FOUND">
+                            <set-variable variableName="shortCircuit" value="false"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </when>
+        </choice>
+        <choice>
+            <when expression="#[vars.shortCircuit default false]">
+                <logger level="INFO" message="#['Idempotent replay correlationId=' ++ vars.correlationId]"/>
+            </when>
+            <otherwise>
+                <flow-ref name="prc-create-customer-impl"/>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <sub-flow name="prc-create-customer-impl">
+        <ee:transform>
+            <ee:set-variable variableName="customerId"><![CDATA[%dw 2.0
+output application/java
+---
+"CUST-" ++ (uuid() replace "-" with "")[0 to 7] as String]]></ee:set-variable>
+            <ee:set-payload resource="dwl/to-sfdc-composite.dwl"/>
+        </ee:transform>
+        <until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.millisBetween}">
+            <http:request method="POST" config-ref="sfdc-sys-http" path="/composite/account-contact">
+                <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+            </http:request>
+        </until-successful>
+        <set-variable variableName="salesforceAccountId" value="#[payload.accountId]"/>
+        <set-variable variableName="salesforceContactId" value="#[payload.contactId]"/>
+        <set-payload value="#[vars.canonicalRequest]"/>
+        <ee:transform>
+            <ee:set-payload resource="dwl/to-erp-customer.dwl"/>
+        </ee:transform>
+        <try>
+            <http:request method="POST" config-ref="erp-sys-http" path="/customers">
+                <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+            </http:request>
+            <set-variable variableName="erpCustomerId" value="#[payload.erpCustomerId]"/>
+            <error-handler>
+                <on-error-propagate type="HTTP:*, ANY">
+                    <logger level="ERROR" message="#['ERP create failed after Salesforce success accountId=' ++ vars.salesforceAccountId ++ ' correlationId=' ++ vars.correlationId]"/>
+                    <raise-error type="CUSTOM:PARTIAL_COMMIT" description="Salesforce Account created; ERP write failed"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        <ee:transform>
+            <ee:set-variable variableName="mapping"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  customerId: vars.customerId,
+  salesforceAccountId: vars.salesforceAccountId,
+  salesforceContactId: vars.salesforceContactId,
+  erpCustomerId: vars.erpCustomerId,
+  primaryContact: vars.canonicalRequest.primaryContact,
+  createdAt: now()
+}]]></ee:set-variable>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.mapping ++ { status: "ACTIVE" }]]></ee:set-payload>
+        </ee:transform>
+        <os:store key="#[vars.customerId]" objectStore="customer-mapping-store">
+            <os:value><![CDATA[#[vars.mapping]]]></os:value>
+        </os:store>
+        <choice>
+            <when expression="#[!isEmpty(vars.idempotencyKey)]">
+                <os:store key="#[vars.idempotencyKey]" objectStore="idempotency-store">
+                    <os:value><![CDATA[#[{ hash: vars.payloadHash, httpStatus: 201, response: payload }]]]></os:value>
+                </os:store>
+            </when>
+        </choice>
+        <set-variable variableName="httpStatus" value="201"/>
+    </sub-flow>
+</mule>

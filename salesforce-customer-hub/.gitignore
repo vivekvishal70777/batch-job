@@ -1,0 +1,16 @@
+target/
+.mule/
+.idea/
+*.iml
+.DS_Store
+*.log
+.classpath
+.project
+.settings/
+.studio/
+bin/
+.vscode/
+*.jar
+*.zip
+exchange-bundle/
+.temp/

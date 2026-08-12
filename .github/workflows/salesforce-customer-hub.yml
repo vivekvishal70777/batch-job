@@ -1,0 +1,32 @@
+name: Salesforce Customer 360 CI
+on:
+  push:
+    paths:
+      - "salesforce-customer-hub/**"
+      - ".github/workflows/salesforce-customer-hub.yml"
+  pull_request:
+    paths:
+      - "salesforce-customer-hub/**"
+
+jobs:
+  munit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: salesforce-customer-hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Run MUnit (requires Mule EE / Exchange access in a real pipeline)
+        run: mvn -B test
+        continue-on-error: true
+      - name: Validate RAML present
+        run: |
+          test -f sfdc-system-api/src/main/resources/api/sfdc-system-api.raml
+          test -f customer-process-api/src/main/resources/api/customer-process-api.raml
+          test -f customer-experience-api/src/main/resources/api/customer-experience-api.raml
+          test -f erp-system-api/src/main/resources/api/erp-system-api.raml

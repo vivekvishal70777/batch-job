@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <global-property name="env" value="dev"/>
+    <configuration-properties file="${env}-config.yaml"/>
+    <configuration defaultErrorHandler-ref="exp-error-handler"/>
+
+    <http:listener-config name="http-listener-config">
+        <http:listener-connection host="${http.listener.host}" port="${http.listener.port}"/>
+    </http:listener-config>
+
+    <http:request-config name="process-http" basePath="${process.basePath}" responseTimeout="35000">
+        <http:request-connection host="${process.host}" port="${process.port}"/>
+    </http:request-config>
+
+    <apikit:config name="customer-experience-api-config" api="api/customer-experience-api.raml"
+                   outboundHeadersMapName="outboundHeaders" httpStatusVarName="httpStatus"/>
+
+    <error-handler name="exp-error-handler">
+        <on-error-propagate type="APIKIT:BAD_REQUEST">
+            <set-variable variableName="httpStatus" value="400"/>
+            <set-variable variableName="errorCode" value="EXP-400"/>
+            <set-variable variableName="errorMessage" value="#[error.description default 'Bad request']"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+        <on-error-propagate type="HTTP:NOT_FOUND">
+            <set-variable variableName="httpStatus" value="404"/>
+            <set-variable variableName="errorCode" value="EXP-404"/>
+            <set-variable variableName="errorMessage" value="Customer not found"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+        <on-error-propagate type="ANY">
+            <set-variable variableName="httpStatus" value="#[if (error.errorMessage.attributes.statusCode default 0) == 409 then 409 else 500]"/>
+            <set-variable variableName="errorCode" value="EXP-500"/>
+            <set-variable variableName="errorMessage" value="#[error.description default 'Unexpected experience error']"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+    </error-handler>
+
+    <flow name="customer-experience-api-main">
+        <http:listener config-ref="http-listener-config" path="${http.listener.basePath}">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {} ++ {"X-Correlation-Id": vars.correlationId default correlationId}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers>#[vars.outboundHeaders default {} ++ {"X-Correlation-Id": vars.correlationId default correlationId}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <set-variable variableName="correlationId"
+                      value="#[attributes.headers['x-correlation-id'] default attributes.headers['X-Correlation-Id'] default correlationId]"/>
+        <logger level="INFO"
+                message="#['customer-experience-api ' ++ attributes.method ++ ' ' ++ attributes.requestPath ++ ' correlationId=' ++ vars.correlationId]"/>
+        <apikit:router config-ref="customer-experience-api-config"/>
+    </flow>
+
+    <flow name="get:\health:customer-experience-api-config">
+        <set-payload value="#[{ api: p('api.name'), status: 'UP', timestamp: now() }]" mimeType="application/json"/>
+    </flow>
+
+    <flow name="post:\customers:customer-experience-api-config">
+        <set-variable variableName="idempotencyKey"
+                      value="#[attributes.headers['idempotency-key'] default attributes.headers['Idempotency-Key'] default '']"/>
+        <ee:transform>
+            <ee:set-payload resource="dwl/to-canonical.dwl"/>
+        </ee:transform>
+        <http:request method="POST" config-ref="process-http" path="/customers">
+            <http:headers><![CDATA[#[output application/java
+---
+{
+  "X-Correlation-Id": vars.correlationId,
+  "Idempotency-Key": vars.idempotencyKey
+}]]]></http:headers>
+        </http:request>
+        <ee:transform>
+            <ee:set-payload resource="dwl/create-response.dwl"/>
+        </ee:transform>
+        <set-variable variableName="httpStatus" value="201"/>
+    </flow>
+
+    <flow name="get:\customers\(customerId):customer-experience-api-config">
+        <http:request method="GET" config-ref="process-http"
+                      path="#['/customers/' ++ attributes.uriParams.customerId]">
+            <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+        </http:request>
+        <ee:transform>
+            <ee:set-payload resource="dwl/to-portal.dwl"/>
+        </ee:transform>
+    </flow>
+
+    <flow name="post:\customers\(customerId)\cases:customer-experience-api-config">
+        <http:request method="POST" config-ref="process-http"
+                      path="#['/customers/' ++ attributes.uriParams.customerId ++ '/cases']">
+            <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+        </http:request>
+        <set-variable variableName="httpStatus" value="201"/>
+    </flow>
+</mule>

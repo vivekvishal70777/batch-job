@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <error-handler name="prc-error-handler">
+        <on-error-propagate type="CUSTOM:IDEMPOTENCY_CONFLICT">
+            <set-variable variableName="httpStatus" value="409"/>
+            <set-variable variableName="errorCode" value="PRC-409"/>
+            <set-variable variableName="errorMessage" value="Idempotency-Key reused with a different payload"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+        <on-error-propagate type="CUSTOM:RESOURCE_NOT_FOUND, APIKIT:NOT_FOUND">
+            <set-variable variableName="httpStatus" value="404"/>
+            <set-variable variableName="errorCode" value="PRC-404"/>
+            <set-variable variableName="errorMessage" value="#[error.description default 'Customer not found']"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+        <on-error-propagate type="CUSTOM:PARTIAL_COMMIT">
+            <set-variable variableName="httpStatus" value="202"/>
+            <set-variable variableName="errorCode" value="PRC-PARTIAL"/>
+            <set-variable variableName="errorMessage" value="Salesforce succeeded; ERP compensation retry scheduled"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+        <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+            <set-variable variableName="httpStatus" value="504"/>
+            <set-variable variableName="errorCode" value="PRC-SFDC-TIMEOUT"/>
+            <set-variable variableName="errorMessage" value="Downstream system timeout after retries"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+        <on-error-propagate type="APIKIT:BAD_REQUEST">
+            <set-variable variableName="httpStatus" value="400"/>
+            <set-variable variableName="errorCode" value="PRC-400"/>
+            <set-variable variableName="errorMessage" value="#[error.description default 'Bad request']"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+        <on-error-propagate type="ANY">
+            <set-variable variableName="httpStatus" value="500"/>
+            <set-variable variableName="errorCode" value="PRC-500"/>
+            <set-variable variableName="errorMessage" value="#[error.description default 'Unexpected process error']"/>
+            <logger level="ERROR" message="#['customer-process-api correlationId=' ++ (vars.correlationId default correlationId) ++ ' ' ++ (error.description default '')]"/>
+            <ee:transform>
+                <ee:set-payload resource="dwl/error-response.dwl"/>
+            </ee:transform>
+        </on-error-propagate>
+    </error-handler>
+</mule>

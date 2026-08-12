@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <!-- Caches OAuth access token. Production should use JWT bearer; password grant is documented for sandbox only. -->
+    <sub-flow name="sfdc-get-access-token">
+        <try>
+            <os:retrieve key="sfdcAccessToken" objectStore="sfdc-token-store" target="cachedToken"/>
+            <set-variable variableName="sfdcAccessToken" value="#[vars.cachedToken]"/>
+            <error-handler>
+                <on-error-continue type="OS:KEY_NOT_FOUND">
+                    <http:request method="POST" config-ref="salesforce-http-request" path="/services/oauth2/token">
+                        <http:query-params><![CDATA[#[output application/java
+---
+{
+  grant_type: "password",
+  client_id: p('salesforce.clientId'),
+  client_secret: p('salesforce.clientSecret'),
+  username: p('salesforce.username'),
+  password: p('salesforce.password') ++ p('salesforce.token')
+}]]]></http:query-params>
+                    </http:request>
+                    <set-variable variableName="sfdcAccessToken" value="#[payload.access_token]"/>
+                    <set-variable variableName="sfdcInstanceUrl" value="#[payload.instance_url]"/>
+                    <os:store key="sfdcAccessToken" objectStore="sfdc-token-store">
+                        <os:value><![CDATA[#[vars.sfdcAccessToken]]]></os:value>
+                    </os:store>
+                    <os:store key="sfdcInstanceUrl" objectStore="sfdc-token-store">
+                        <os:value><![CDATA[#[vars.sfdcInstanceUrl]]]></os:value>
+                    </os:store>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <sub-flow name="sfdc-route-mock-or-live">
+        <choice>
+            <when expression="#[p('salesforce.mode') == 'mock']">
+                <flow-ref name="sfdc-mock-dispatch"/>
+            </when>
+            <otherwise>
+                <flow-ref name="sfdc-get-access-token"/>
+                <flow-ref name="sfdc-live-dispatch"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+</mule>

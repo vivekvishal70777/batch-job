@@ -1,0 +1,21 @@
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8082"
+    basePath: "/api/*"
+api:
+  name: "customer-process-api"
+  version: "v1"
+sfdc:
+  sys:
+    host: "localhost"
+    port: "8083"
+    basePath: "/api/v1"
+erp:
+  sys:
+    host: "localhost"
+    port: "8084"
+    basePath: "/api/v1"
+retry:
+  maxRetries: "3"
+  millisBetween: "2000"

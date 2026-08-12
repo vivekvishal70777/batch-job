@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+
+    <global-property name="env" value="dev"/>
+    <configuration-properties file="${env}-config.yaml"/>
+    <configuration defaultErrorHandler-ref="sfdc-sys-error-handler"/>
+
+    <http:listener-config name="http-listener-config">
+        <http:listener-connection host="${http.listener.host}" port="${http.listener.port}"/>
+    </http:listener-config>
+
+    <http:request-config name="salesforce-http-request" basePath="/" responseTimeout="30000">
+        <http:request-connection host="login.salesforce.com" protocol="HTTPS" port="443"/>
+    </http:request-config>
+
+    <apikit:config name="sfdc-system-api-config"
+                   api="api/sfdc-system-api.raml"
+                   outboundHeadersMapName="outboundHeaders"
+                   httpStatusVarName="httpStatus"/>
+
+    <os:object-store name="sfdc-token-store" persistent="true" entryTtl="50" entryTtlUnit="MINUTES" maxEntries="10"/>
+    <os:object-store name="sfdc-mock-store" persistent="true" entryTtl="7" entryTtlUnit="DAYS" maxEntries="5000"/>
+
+    <validation:config name="validation-config"/>
+</mule>

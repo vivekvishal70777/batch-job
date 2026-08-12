@@ -1,0 +1,27 @@
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8083"
+    basePath: "/api/*"
+
+api:
+  name: "sfdc-system-api"
+  version: "v1"
+
+salesforce:
+  mode: "live"
+  loginUrl: "https://login.salesforce.com"
+  clientId: "${secure::salesforce.clientId}"
+  clientSecret: "${secure::salesforce.clientSecret}"
+  username: "${secure::salesforce.username}"
+  password: "${secure::salesforce.password}"
+  token: "${secure::salesforce.token}"
+  apiVersion: "v61.0"
+  compositePath: "/services/data/v61.0/composite"
+  sobjectsPath: "/services/data/v61.0/sobjects"
+  queryPath: "/services/data/v61.0/query"
+  bulkPath: "/services/data/v61.0/jobs/ingest"
+
+retry:
+  maxRetries: "3"
+  millisBetween: "2000"

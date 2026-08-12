@@ -1,0 +1,122 @@
+{
+  "info": {
+    "name": "Salesforce Customer 360 Hub",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Experience health",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8081/api/v1/health"
+          }
+        },
+        {
+          "name": "Process health",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8082/api/v1/health"
+          }
+        },
+        {
+          "name": "Salesforce System health",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8083/api/v1/health"
+          }
+        },
+        {
+          "name": "ERP System health",
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:8084/api/v1/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create customer (idempotent)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Created', function () { pm.response.to.have.status(201); });",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('customerId', json.customerId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Idempotency-Key", "value": "demo-001" },
+          { "key": "X-Correlation-Id", "value": "demo-corr-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Northwind Manufacturing\",\n  \"industry\": \"Manufacturing\",\n  \"city\": \"Austin\",\n  \"state\": \"TX\",\n  \"country\": \"US\",\n  \"postalCode\": \"78701\",\n  \"contactFirstName\": \"Ana\",\n  \"contactLastName\": \"Diaz\",\n  \"email\": \"ana.diaz@northwind.example\",\n  \"phone\": \"+1-512-555-0142\"\n}"
+        },
+        "url": "http://localhost:8081/api/v1/customers"
+      }
+    },
+    {
+      "name": "Replay same Idempotency-Key",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Idempotency-Key", "value": "demo-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Northwind Manufacturing\",\n  \"industry\": \"Manufacturing\",\n  \"city\": \"Austin\",\n  \"state\": \"TX\",\n  \"country\": \"US\",\n  \"postalCode\": \"78701\",\n  \"contactFirstName\": \"Ana\",\n  \"contactLastName\": \"Diaz\",\n  \"email\": \"ana.diaz@northwind.example\",\n  \"phone\": \"+1-512-555-0142\"\n}"
+        },
+        "url": "http://localhost:8081/api/v1/customers"
+      }
+    },
+    {
+      "name": "Get customer 360",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:8081/api/v1/customers/{{customerId}}"
+      }
+    },
+    {
+      "name": "Open case",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"subject\": \"Need updated credit terms\",\n  \"description\": \"Finance requested a limit review\",\n  \"priority\": \"High\"\n}"
+        },
+        "url": "http://localhost:8081/api/v1/customers/{{customerId}}/cases"
+      }
+    },
+    {
+      "name": "CDC Account change",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"replayId\": \"1:12345\",\n  \"entityName\": \"Account\",\n  \"changeType\": \"UPDATE\",\n  \"recordIds\": [\"001MOCK\"],\n  \"payload\": { \"Name\": \"Northwind Manufacturing Intl\" },\n  \"origin\": \"SALESFORCE\"\n}"
+        },
+        "url": "http://localhost:8082/api/v1/events/salesforce-cdc"
+      }
+    },
+    {
+      "name": "Nightly bulk reconcile",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:8082/api/v1/customers/sync/bulk"
+      }
+    }
+  ]
+}

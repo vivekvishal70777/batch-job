@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <flow name="get:\customers\(customerId):customer-process-api-config">
+        <set-variable variableName="customerId" value="#[attributes.uriParams.customerId]"/>
+        <try>
+            <os:retrieve key="#[vars.customerId]" objectStore="customer-mapping-store" target="customerMapping"/>
+            <error-handler>
+                <on-error-propagate type="OS:KEY_NOT_FOUND">
+                    <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="#['Unknown customerId ' ++ vars.customerId]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        <scatter-gather>
+            <route>
+                <try>
+                    <http:request method="GET" config-ref="sfdc-sys-http"
+                                  path="#['/accounts/' ++ vars.customerMapping.salesforceAccountId]">
+                        <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+                    </http:request>
+                    <set-variable variableName="sfdcAccount" value="#[payload]"/>
+                    <error-handler>
+                        <on-error-continue type="HTTP:*">
+                            <set-variable variableName="warnings" value="#[(vars.warnings default []) ++ ['Salesforce Account unavailable']]"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </route>
+            <route>
+                <try>
+                    <http:request method="GET" config-ref="erp-sys-http"
+                                  path="#['/customers/' ++ vars.customerMapping.erpCustomerId]">
+                        <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+                    </http:request>
+                    <set-variable variableName="erpCustomer" value="#[payload]"/>
+                    <error-handler>
+                        <on-error-continue type="HTTP:*">
+                            <set-variable variableName="warnings" value="#[(vars.warnings default []) ++ ['ERP customer unavailable']]"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </route>
+        </scatter-gather>
+        <choice>
+            <when expression="#[isEmpty(vars.sfdcAccount) and isEmpty(vars.erpCustomer)]">
+                <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="Customer not found in Salesforce or ERP"/>
+            </when>
+        </choice>
+        <ee:transform>
+            <ee:set-payload resource="dwl/merge-360.dwl"/>
+        </ee:transform>
+    </flow>
+
+    <flow name="post:\customers\(customerId)\cases:customer-process-api-config">
+        <set-variable variableName="customerId" value="#[attributes.uriParams.customerId]"/>
+        <set-variable variableName="caseRequest" value="#[payload]"/>
+        <try>
+            <os:retrieve key="#[vars.customerId]" objectStore="customer-mapping-store" target="customerMapping"/>
+            <error-handler>
+                <on-error-propagate type="OS:KEY_NOT_FOUND">
+                    <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="#['Unknown customerId ' ++ vars.customerId]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        <ee:transform>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  accountId: vars.customerMapping.salesforceAccountId,
+  subject: vars.caseRequest.subject,
+  description: vars.caseRequest.description,
+  origin: vars.caseRequest.origin default "Web",
+  priority: vars.caseRequest.priority default "Medium"
+}]]></ee:set-payload>
+        </ee:transform>
+        <http:request method="POST" config-ref="sfdc-sys-http" path="/cases">
+            <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+        </http:request>
+        <set-variable variableName="httpStatus" value="201"/>
+    </flow>
+</mule>

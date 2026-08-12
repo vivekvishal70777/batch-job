@@ -1,7 +1,12 @@
 {
-  "secureProperties": ["database.sqlserver.password","email.smtp.passowrd","sftp.password","secure.key"],
   "minMuleVersion": "4.9.0",
   "javaSpecificationVersions": [
     "17"
+  ],
+  "secureProperties": [
+    "database.sqlserver.password",
+    "email.smtp.password",
+    "sftp.password",
+    "secure.key"
   ]
 }

@@ -2,7 +2,6 @@ database:
   sqlserver:
     password: "![bUaUjxT0+uANES3HhmwXkQ==]"
 
-
 email:
   smtp:
     password: "![+raoe+RK2CAvs8FKFnXZNGNo5AcxeqLZ]"

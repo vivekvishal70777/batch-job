@@ -1,11 +1,10 @@
 database:
   sqlserver:
-    password: "![bUaUjxT0+uANES3HhmwXkQ==]"
-
+    password: "![CHANGE_ME_ENCRYPT_WITH_SECURE_PROPERTIES_TOOL]"
 
 email:
   smtp:
-    password: "![+raoe+RK2CAvs8FKFnXZNGNo5AcxeqLZ]"
+    password: "![CHANGE_ME_ENCRYPT_WITH_SECURE_PROPERTIES_TOOL]"
 
 sftp:
-  password: "![Uok1Ev7bvbjYi84olI539NP8Z1H8Z9NDz8snaDbjYIW3/yXG5WNUOw==]"
+  password: "![CHANGE_ME_ENCRYPT_WITH_SECURE_PROPERTIES_TOOL]"

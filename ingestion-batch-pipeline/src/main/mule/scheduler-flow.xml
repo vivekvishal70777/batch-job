@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+
+    <flow name="migration-scheduler-flow">
+        <scheduler doc:name="Nightly migration">
+            <scheduling-strategy>
+                <cron expression="${scheduler.cron}" timeZone="${scheduler.timezone}"/>
+            </scheduling-strategy>
+        </scheduler>
+        <choice doc:name="Scheduler enabled?">
+            <when expression="#[p('scheduler.enabled') == 'true']">
+                <try doc:name="Scheduled run">
+                    <set-variable variableName="fileName" value="${sftp.input-filename}"/>
+                    <set-variable variableName="dryRun" value="#[p('migration.dry-run-default') == 'true']"/>
+                    <flow-ref name="prepare-migration-sub-flow"/>
+                    <flow-ref name="migration-orchestrator-flow"/>
+                    <error-handler>
+                        <on-error-continue type="APP:LOCK_NOT_ACQUIRED" doc:name="Skip overlapping run">
+                            <logger level="WARN" doc:name="Skip scheduled overlap"
+                                    message="#[import * from dwl::common --- logLine(vars.jobId, 'migration-scheduler-flow', 'Skipped; another migration is running')]"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </when>
+            <otherwise>
+                <logger level="INFO" doc:name="Scheduler disabled"
+                        message="#[import * from dwl::common --- logLine(null, 'migration-scheduler-flow', 'Scheduler disabled by configuration')]"/>
+            </otherwise>
+        </choice>
+    </flow>
+</mule>

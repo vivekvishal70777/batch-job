@@ -1,25 +1,34 @@
 app:
-  name: ingestion-service
+  name: data-migration-pipeline
+  timezone: "Asia/Kolkata"
+  entity: "inventory"
 
 scheduler:
+  enabled: "true"
   cron: "0 0 4 * * ?"
-  tzone: "Asia/Kolkata"
+  timezone: "Asia/Kolkata"
+
 http:
   listener:
     host: "0.0.0.0"
-    port: "8089"
-    read-path: "/read"
-    email-path: "/email"
+    port: "8081"
+    base-path: "/api/v1"
 
-file:
-  entity: "inventory"
-  input:
-    directory: "inbox"
-    file-name: "inventory.csv"
-    path: "inbox/inventory.csv"
-  output:
-    directory: "outbound"
-    test-prefix: "test-ram"
+migration:
+  lock-key: "inventory-migration-lock"
+  lock-ttl-minutes: "120"
+  dry-run-default: "false"
+  allowed-types: "Standard,Backorder"
+  max-quantity: "999999999"
+
+batch:
+  block-size: "200"
+  max-concurrency: "4"
+  max-failed-records: "-1"
+
+retry:
+  max: "3"
+  interval-ms: "2000"
 
 database:
   sqlserver:
@@ -27,6 +36,12 @@ database:
     port: "1433"
     user: "project-admin"
     name: "mule-test-db"
+    encrypt: "true"
+    trust-server-certificate: "false"
+    pool:
+      max-size: "8"
+      min-size: "2"
+      max-wait-seconds: "10"
 
 email:
   smtp:
@@ -37,7 +52,7 @@ email:
   notification:
     from-address: "vivekvishal70777@gmail.com"
     to-address: "vivekvishal0034@gmail.com"
-    subject: "Batch Status"
+    subject-prefix: "[DEV] Inventory Migration"
 
 sftp:
   host: "ap-southeast-1.sftpcloud.io"
@@ -46,13 +61,27 @@ sftp:
   working-dir: "SFTP/"
   input-directory: "inbox/"
   input-filename: "inventory.csv"
+  filename-pattern: "inventory*.csv"
+  mode: "single"
   archive-directory: "archive/"
   output-directory: "outbound/"
-  output-directory-error: "outbound/error/"
+  error-directory: "outbound/error/"
+
 query:
-  insert-success-record: "INSERT INTO InventoryBatch (SKU, StoreId, Type, Quantity, Timestamp, BatchId, Starttime) VALUES (:SKU, :StoreId, :Type, :Quantity, :Timestamp, :BatchId, :StartTime)"
-  insert-failure-record: "INSERT INTO InventoryBatchError (SKU, StoreId, Type, Quantity, Timestamp, BatchId,Starttime,ErrorDescription) VALUES (:SKU, :StoreId, :Type, :Quantity, :Timestamp, :BatchId,:StartTime, :ErrorDescription)"
-  distinct-storeid: "select distinct StoreId from InventoryBatch where BatchId = :batchId"
-  fetch-success-record: "select SKU, StoreId, Type, Quantity, Timestamp from InventoryBatch where BatchId = :batchId and StoreId = :storeId"
-  fetch-failure-record: "select SKU, StoreId, Type, Quantity, Timestamp from InventoryBatchError where BatchId = :batchId"
-  count-failure-record: "select count(BatchId) as totalRecord from InventoryBatchError where BatchId = :batchId"
+  health-check: "SELECT 1 AS healthy"
+  insert-job: "INSERT INTO MigrationJob (JobId, Entity, Status, SourceFile, StartedAt, CorrelationId, DryRun) VALUES (:jobId, :entity, :status, :sourceFile, SYSUTCDATETIME(), :correlationId, :dryRun)"
+  update-job-running: "UPDATE MigrationJob SET Status = 'RUNNING' WHERE JobId = :jobId"
+  complete-job: "UPDATE MigrationJob SET Status = :status, CompletedAt = SYSUTCDATETIME(), TotalRecords = :totalRecords, SuccessCount = :successCount, FailureCount = :failureCount, MergedCount = :mergedCount, ErrorMessage = :errorMessage WHERE JobId = :jobId"
+  fetch-job: "SELECT JobId, Entity, Status, SourceFile, StartedAt, CompletedAt, TotalRecords, SuccessCount, FailureCount, MergedCount, CorrelationId, DryRun, ErrorMessage FROM MigrationJob WHERE JobId = :jobId"
+  fetch-recent-jobs: "SELECT TOP 20 JobId, Entity, Status, SourceFile, StartedAt, CompletedAt, TotalRecords, SuccessCount, FailureCount, MergedCount, CorrelationId, DryRun FROM MigrationJob ORDER BY StartedAt DESC"
+  insert-staging: "INSERT INTO InventoryStaging (SKU, StoreId, Type, Quantity, SourceTimestamp, JobId, LoadedAt) VALUES (:SKU, :StoreId, :Type, :Quantity, :SourceTimestamp, :JobId, SYSUTCDATETIME())"
+  insert-error: "INSERT INTO InventoryMigrationError (SKU, StoreId, Type, Quantity, SourceTimestamp, JobId, ErrorDescription, CreatedAt) VALUES (:SKU, :StoreId, :Type, :Quantity, :SourceTimestamp, :JobId, :ErrorDescription, SYSUTCDATETIME())"
+  merge-staging: "MERGE dbo.InventoryTarget AS target USING (SELECT SKU, StoreId, Type, Quantity, SourceTimestamp, JobId FROM (SELECT SKU, StoreId, Type, Quantity, SourceTimestamp, JobId, ROW_NUMBER() OVER (PARTITION BY SKU, StoreId ORDER BY LoadedAt DESC) AS rn FROM dbo.InventoryStaging WHERE JobId = :jobId) ranked WHERE rn = 1) AS source ON (target.SKU = source.SKU AND target.StoreId = source.StoreId) WHEN MATCHED THEN UPDATE SET Type = source.Type, Quantity = source.Quantity, SourceTimestamp = source.SourceTimestamp, LastJobId = source.JobId, UpdatedAt = SYSUTCDATETIME() WHEN NOT MATCHED THEN INSERT (SKU, StoreId, Type, Quantity, SourceTimestamp, LastJobId, CreatedAt, UpdatedAt) VALUES (source.SKU, source.StoreId, source.Type, source.Quantity, source.SourceTimestamp, source.JobId, SYSUTCDATETIME(), SYSUTCDATETIME());"
+  count-staging: "SELECT COUNT(1) AS totalRecord FROM dbo.InventoryStaging WHERE JobId = :jobId"
+  count-target-for-job: "SELECT COUNT(1) AS totalRecord FROM dbo.InventoryTarget WHERE LastJobId = :jobId"
+  count-errors: "SELECT COUNT(1) AS totalRecord FROM dbo.InventoryMigrationError WHERE JobId = :jobId"
+  delete-staging: "DELETE FROM dbo.InventoryStaging WHERE JobId = :jobId"
+  fetch-errors: "SELECT SKU, StoreId, Type, Quantity, SourceTimestamp, ErrorDescription FROM dbo.InventoryMigrationError WHERE JobId = :jobId"
+  fetch-merged: "SELECT SKU, StoreId, Type, Quantity, SourceTimestamp FROM dbo.InventoryTarget WHERE LastJobId = :jobId"
+  insert-file-audit: "INSERT INTO MigrationFileAudit (FileName, FilePath, JobId, Status, ProcessedAt) VALUES (:fileName, :filePath, :jobId, :status, SYSUTCDATETIME())"
+  upsert-watermark: "MERGE dbo.MigrationWatermark AS target USING (SELECT :entity AS Entity, :jobId AS LastJobId) AS source ON target.Entity = source.Entity WHEN MATCHED THEN UPDATE SET LastJobId = source.LastJobId, LastSuccessfulAt = SYSUTCDATETIME(), UpdatedAt = SYSUTCDATETIME() WHEN NOT MATCHED THEN INSERT (Entity, LastJobId, LastSuccessfulAt, UpdatedAt) VALUES (source.Entity, source.LastJobId, SYSUTCDATETIME(), SYSUTCDATETIME());"

@@ -1,190 +1,216 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<mule xmlns:ftp="http://www.mulesoft.org/schema/mule/ftp"
-      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
-      xmlns:file="http://www.mulesoft.org/schema/mule/file"
-      xmlns:db="http://www.mulesoft.org/schema/mule/db"
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-        http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
-        http://www.mulesoft.org/schema/mule/ftp http://www.mulesoft.org/schema/mule/ftp/current/mule-ftp.xsd
-        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
-        http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
-    <sub-flow name="export-success-records-flow">
-		<logger level="INFO" doc:name="Start" doc:id="2a577b99-08c8-4e66-8f63-4f41bc35a2db" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |Start']" />
-		<ee:transform doc:name="Set Query And Input Parameter" doc:id="236c3d1f-509b-4cd0-a151-030f4502395b" >
-			<ee:message >
-			</ee:message>
-			<ee:variables >
-				<ee:set-variable variableName="query" ><![CDATA[%dw 2.0
-output application/json
----
-Mule::p('query.distinct-storeid')]]></ee:set-variable>
-				<ee:set-variable variableName="inputParameter" ><![CDATA[%dw 2.0
-output application/json
----
-{
-    batchId: vars.batchId
-}]]></ee:set-variable>
-				<ee:set-variable variableName="flagFailure" ><![CDATA[0]]></ee:set-variable>
-			</ee:variables>
-		</ee:transform>
-		<flow-ref doc:name="Call fetch-data-record" doc:id="7b551930-295a-4db0-9e0f-7f44921a93fd" name="fetch-data-record" />
-		<choice doc:name="Store Id Choice">
-            <when expression="#[(not isEmpty(payload))]">
-                <ee:transform doc:name="Set Store Id Collection">
-                    <ee:message />
-                    <ee:variables>
-                        <ee:set-variable variableName="storeIds"><![CDATA[%dw 2.0
-output application/json
----
-payload.*StoreId]]></ee:set-variable>
-                    </ee:variables>
-                </ee:transform>
-
-                <parallel-foreach doc:name="Export Success Records By Store" collection="#[(vars.storeIds)]">
-                    <ee:transform doc:name="Prepare Success Export Query And Path">
-                        <ee:message />
-                        <ee:variables>
-							<ee:set-variable variableName="query" ><![CDATA[%dw 2.0
+    <sub-flow name="merge-and-reconcile-sub-flow">
+        <logger level="INFO" doc:name="Start merge"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'merge-and-reconcile-sub-flow', 'Start')]"/>
+        <ee:transform doc:name="Prepare merge">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
 output application/java
 ---
-Mule::p('query.fetch-success-record')]]></ee:set-variable>
-							<ee:set-variable variableName="inputParameter" ><![CDATA[%dw 2.0
-output application/json
----
-{
-	batchId : vars.batchId,
-	storeId: payload
-	
-}
-
-]]></ee:set-variable>
-							<ee:set-variable variableName="path" ><![CDATA[%dw 2.0
+p('query.merge-staging')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
 output application/java
-var batchDate = (vars.startTime splitBy " ")[0] as String
 ---
-Mule::p('sftp.output-directory') ++ "/"++ batchDate ++ "-" ++ (vars.batchId as String) ++"/" ++ Mule::p('file.entity') ++"-" ++ (payload as String) ++ "-" ++ batchDate ++ ".csv"]]></ee:set-variable>
-                        
-</ee:variables>
-                    </ee:transform>
-
-                    <flow-ref doc:name="Call fetch-data-record" doc:id="e2b3d0a2-b551-4c72-9895-16627dfeac6f" name="fetch-data-record" />
-
-                    <ee:transform doc:name="Convert Success Records To CSV">
-                        <ee:message>
-                            <ee:set-payload><![CDATA[%dw 2.0
-output text/csv header=true, deferred=true
+{ jobId: vars.jobId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-update-sub-flow"/>
+        <ee:transform doc:name="Count staging remaining">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
 ---
-payload map (data) -> {
-    SKU: data.SKU,
-    StoreId: data.StoreId,
-    Type: data."Type",
-    Quantity: data.Quantity,
-    Timestamp: data.Timestamp
-}]]></ee:set-payload>
-                        </ee:message>
-                    </ee:transform>
-					<flow-ref doc:name="Call write-record-sftp" doc:id="06b22cc9-5f57-4afd-8388-443af0a2fd84" name="write-record-sftp" />
-                
-</parallel-foreach>
+p('query.count-staging')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{ jobId: vars.jobId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-select-sub-flow"/>
+        <set-variable variableName="stagingRemaining" value="#[payload[0].totalRecord default 0]"/>
+        <ee:transform doc:name="Count merged target rows">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
+---
+p('query.count-target-for-job')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{ jobId: vars.jobId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-select-sub-flow"/>
+        <set-variable variableName="mergedCount" value="#[payload[0].totalRecord default 0]"/>
+        <choice doc:name="Reconciliation check">
+            <when expression="#[(vars.successCount as Number) &gt; 0 and (vars.mergedCount as Number) == 0]">
+                <raise-error type="APP:RECONCILIATION_FAILED" description="Valid records were staged but none were merged into the target table"/>
             </when>
             <otherwise>
-                <logger level="INFO" doc:name="Log No Success Records" message="No success records for batch  #[vars.batchId]" />
-				<set-variable value="#[1]" doc:name="flagFailure" doc:id="97bcff13-66be-4e19-bbb3-bdb55a209d75" variableName="flagFailure"/>
-            
-</otherwise>
+                <logger level="INFO" doc:name="Log reconciliation"
+                        message="#[import * from dwl::common --- logLine(vars.jobId, 'merge-and-reconcile-sub-flow', 'Merged=' ++ (vars.mergedCount as String) ++ ' stagingRemaining=' ++ (vars.stagingRemaining as String))]"/>
+            </otherwise>
         </choice>
-		<logger level="INFO" doc:name="End" doc:id="58cbfc13-695e-4b86-ad3c-a07213a1828a" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |End']" />
-	
-    
-</sub-flow>
-
-    <sub-flow name="export-failure-records-flow">
-		<logger level="INFO" doc:name="Start" doc:id="fffafab1-a543-444a-97dc-fb5ed444e4a4" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |Start']" />
-		<ee:transform doc:name="Set Query And Input Parameter" doc:id="96adfab9-ac94-48b9-a330-49fc5859aab0">
-			<ee:message />
-			<ee:variables>
-				<ee:set-variable variableName="query"><![CDATA[%dw 2.0
-output application/json
+        <ee:transform doc:name="Clear staging for job">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
 ---
-Mule::p('query.count-failure-record')
-
-
-
-]]></ee:set-variable>
-				<ee:set-variable variableName="inputParameter"><![CDATA[%dw 2.0
-output application/json
+p('query.delete-staging')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
 ---
-{
-    batchId: vars.batchId
-}]]></ee:set-variable>
-			</ee:variables>
-		</ee:transform>
-		<flow-ref doc:name="Call fetch-data-record" doc:id="7a3ebdd6-b47e-4faf-9b6d-8265302fe753" name="fetch-data-record" />
-		<choice doc:name="Error Record Choice">
-            <when expression="#[(payload[0].totalRecord as Number) > 0]">
-                <ee:transform doc:name="Prepare Error Export Query And Path">
-                    <ee:message />
+{ jobId: vars.jobId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-update-sub-flow"/>
+        <set-variable variableName="jobStatus"
+                      value="#[if ((vars.failureCount as Number) &gt; 0) 'PARTIAL' else if ((vars.successCount as Number) == 0) 'FAILED' else 'COMPLETED']"/>
+        <logger level="INFO" doc:name="End merge"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'merge-and-reconcile-sub-flow', 'End status=' ++ vars.jobStatus)]"/>
+    </sub-flow>
+
+    <sub-flow name="export-results-sub-flow">
+        <logger level="INFO" doc:name="Start export"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'export-results-sub-flow', 'Start')]"/>
+        <choice doc:name="Export errors when present">
+            <when expression="#[(vars.failureCount as Number) &gt; 0]">
+                <ee:transform doc:name="Prepare error fetch">
+                    <ee:message/>
                     <ee:variables>
-						<ee:set-variable variableName="query" ><![CDATA[%dw 2.0
+                        <ee:set-variable variableName="query"><![CDATA[%dw 2.0
 output application/java
 ---
-Mule::p('query.fetch-failure-record')]]></ee:set-variable>
-						<ee:set-variable variableName="inputParameter" ><![CDATA[%dw 2.0
-output application/json
----
-{
-	batchId : vars.batchId,
-	storeId: payload
-	
-}
-]]></ee:set-variable>
-						<ee:set-variable variableName="path" ><![CDATA[%dw 2.0
+p('query.fetch-errors')]]></ee:set-variable>
+                        <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
 output application/java
-var batchDate = (vars.startTime splitBy " ")[0] as String
 ---
-Mule::p('sftp.output-directory-error') ++ batchDate ++ "/"  ++ "-" ++(Mule::p('file.entity') default "") ++"-"++ batchDate ++ "-" ++ (vars.batchId as String) ++".csv"]]></ee:set-variable>
-                    
-</ee:variables>
+{ jobId: vars.jobId }]]></ee:set-variable>
+                        <ee:set-variable variableName="exportPath"><![CDATA[%dw 2.0
+import * from dwl::common
+output application/java
+---
+errorExportPath(vars.jobId)]]></ee:set-variable>
+                    </ee:variables>
                 </ee:transform>
-
-                <flow-ref doc:name="Call fetch-data-record" doc:id="975dc0ea-5c1b-4480-8d5b-9d9e19fe03ff" name="fetch-data-record" />
-
-                <ee:transform doc:name="Convert Error Records To CSV">
+                <flow-ref name="execute-select-sub-flow"/>
+                <ee:transform doc:name="Errors to CSV">
                     <ee:message>
                         <ee:set-payload><![CDATA[%dw 2.0
-output text/csv header=true, deferred=true
+import * from dwl::inventoryMapper
+output application/csv header=true
 ---
-payload map (data) -> {
-    SKU: data.SKU,
-    StoreId: data.StoreId,
-    Type: data."Type",
-    Quantity: data.Quantity,
-    Timestamp: data.Timestamp,
-    ErrorDescription: data.ErrorDescription
-}]]></ee:set-payload>
-                        </ee:message>
-                    </ee:transform>
-				<flow-ref doc:name="Call write-record-sftp" doc:id="8a8c2d0e-8e21-4fe5-bc9a-7bc4517cd015" name="write-record-sftp" />
-				<set-payload value="#[{ 					headerLine: &quot;Batch completed&quot;,&#10;                	batch: vars.batchId,                	&#10;                    message: &quot;Partial success as few or all the records are invalid, please check the logs&quot;,&#10;                    filePath: Mule::p('sftp.working-dir') ++ vars.path ,&#10;                    timestamp: now() as String&#10;                }]" doc:name="Set Email Body" doc:id="dc0543d9-b416-4a82-98ef-4977779125af" />
-            
-</when>
-			<when expression="#[(payload[0].totalRecord as Number) == 0 and (vars.flagFailure == 0)]">
-				<logger level="INFO" doc:name="Log No Error Records" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' | No error records found for the batch']" />
-				<set-payload value='#[{ 					headerLine: "Batch Completed",&#10;                	batch: vars.batchId,                	&#10;                    message: "Batch Completed",&#10;                    filePath: "NA",&#10;                    timestamp: now() as String&#10;                }]' doc:name="Set Email Body" doc:id="3c09d4df-4704-4a73-88bd-d10a66270089" />
-			</when>
-			<otherwise>
-				<raise-error doc:name="Raise error" doc:id="1e0d5178-55e4-44ac-aba3-964f0bba2b0e" type="CUSTOM:BATCH_FAILED" description="Batch failed" />
-            
-</otherwise>
-        
-</choice>
-		<logger level="INFO" doc:name="End" doc:id="2f0bb169-de6c-405f-aba6-a22fe7d89366" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |End']" />
-		
-</sub-flow>
+payload map (row) -> toCsvError(row)]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+                <flow-ref name="write-export-file-sub-flow"/>
+            </when>
+            <otherwise>
+                <logger level="INFO" doc:name="No errors to export"
+                        message="#[import * from dwl::common --- logLine(vars.jobId, 'export-results-sub-flow', 'No error records')]"/>
+            </otherwise>
+        </choice>
+        <choice doc:name="Export merged records when present">
+            <when expression="#[(vars.mergedCount as Number) &gt; 0]">
+                <ee:transform doc:name="Prepare merged fetch">
+                    <ee:message/>
+                    <ee:variables>
+                        <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
+---
+p('query.fetch-merged')]]></ee:set-variable>
+                        <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{ jobId: vars.jobId }]]></ee:set-variable>
+                        <ee:set-variable variableName="exportPath"><![CDATA[%dw 2.0
+import * from dwl::common
+output application/java
+---
+successExportPath(vars.jobId)]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="execute-select-sub-flow"/>
+                <ee:transform doc:name="Merged records to CSV">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::inventoryMapper
+output application/csv header=true
+---
+payload map (row) -> toCsvSuccess(row)]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+                <flow-ref name="write-export-file-sub-flow"/>
+            </when>
+        </choice>
+        <logger level="INFO" doc:name="End export"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'export-results-sub-flow', 'End')]"/>
+    </sub-flow>
 
+    <sub-flow name="archive-and-audit-sub-flow">
+        <ee:transform doc:name="Set archive file name">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="archiveFileName"><![CDATA[%dw 2.0
+import * from dwl::common
+output application/java
+---
+archiveName(vars.jobId, vars.fileName)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="archive-source-file-sub-flow"/>
+        <ee:transform doc:name="Prepare file audit">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
+---
+p('query.insert-file-audit')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    fileName: vars.fileName,
+    filePath: vars.sourcePath,
+    jobId: vars.jobId,
+    status: vars.jobStatus
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-update-sub-flow"/>
+        <choice doc:name="Update watermark on success">
+            <when expression="#[vars.jobStatus == 'COMPLETED' or vars.jobStatus == 'PARTIAL']">
+                <ee:transform doc:name="Prepare watermark upsert">
+                    <ee:message/>
+                    <ee:variables>
+                        <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
+---
+p('query.upsert-watermark')]]></ee:set-variable>
+                        <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    entity: p('app.entity'),
+    jobId: vars.jobId
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="execute-update-sub-flow"/>
+            </when>
+        </choice>
+    </sub-flow>
 </mule>

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="validate-record-munit-config"/>
+
+    <munit:test name="valid-standard-record-passes" doc:id="valid-standard-record-passes">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='{"SKU":"SKU-1","StoreId":"STORE-01","Type":"Standard","Quantity":10,"Timestamp":"2026-08-01 08:00:00"}' mediaType="application/json"/>
+            </munit:set-event>
+            <flow-ref name="validate-record-sub-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.isValidRecord]" is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="valid-backorder-zero-quantity-passes" doc:id="valid-backorder-zero-quantity-passes">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='{"SKU":"SKU-2","StoreId":"STORE-01","Type":"Backorder","Quantity":0,"Timestamp":"2026-08-01T08:00:00"}' mediaType="application/json"/>
+            </munit:set-event>
+            <flow-ref name="validate-record-sub-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.isValidRecord]" is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="empty-sku-fails-validation" doc:id="empty-sku-fails-validation" expectedErrorType="APP:VALIDATION_FAILED">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='{"SKU":"","StoreId":"STORE-01","Type":"Standard","Quantity":10,"Timestamp":"2026-08-01 08:00:00"}' mediaType="application/json"/>
+            </munit:set-event>
+            <flow-ref name="validate-record-sub-flow"/>
+        </munit:execution>
+    </munit:test>
+
+    <munit:test name="invalid-type-fails-validation" doc:id="invalid-type-fails-validation" expectedErrorType="APP:VALIDATION_FAILED">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='{"SKU":"SKU-3","StoreId":"STORE-01","Type":"Express","Quantity":10,"Timestamp":"2026-08-01 08:00:00"}' mediaType="application/json"/>
+            </munit:set-event>
+            <flow-ref name="validate-record-sub-flow"/>
+        </munit:execution>
+    </munit:test>
+
+    <munit:test name="negative-quantity-fails-validation" doc:id="negative-quantity-fails-validation" expectedErrorType="APP:VALIDATION_FAILED">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='{"SKU":"SKU-4","StoreId":"STORE-01","Type":"Standard","Quantity":-1,"Timestamp":"2026-08-01 08:00:00"}' mediaType="application/json"/>
+            </munit:set-event>
+            <flow-ref name="validate-record-sub-flow"/>
+        </munit:execution>
+    </munit:test>
+
+    <munit:test name="fractional-quantity-fails-validation" doc:id="fractional-quantity-fails-validation" expectedErrorType="APP:VALIDATION_FAILED">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='{"SKU":"SKU-5","StoreId":"STORE-01","Type":"Standard","Quantity":1.5,"Timestamp":"2026-08-01 08:00:00"}' mediaType="application/json"/>
+            </munit:set-event>
+            <flow-ref name="validate-record-sub-flow"/>
+        </munit:execution>
+    </munit:test>
+</mule>

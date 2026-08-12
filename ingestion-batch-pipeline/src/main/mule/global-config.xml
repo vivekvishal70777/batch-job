@@ -1,38 +1,73 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
-      xmlns:ftp="http://www.mulesoft.org/schema/mule/ftp"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:sftp="http://www.mulesoft.org/schema/mule/sftp"
       xmlns:email="http://www.mulesoft.org/schema/mule/email"
       xmlns:db="http://www.mulesoft.org/schema/mule/db"
       xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
-      xmlns:file="http://www.mulesoft.org/schema/mule/file"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
       xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
         http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-        http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
         http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
         http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
         http://www.mulesoft.org/schema/mule/email http://www.mulesoft.org/schema/mule/email/current/mule-email.xsd
-        http://www.mulesoft.org/schema/mule/ftp http://www.mulesoft.org/schema/mule/ftp/current/mule-ftp.xsd
-http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+        http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
 
-    <configuration-properties file="${env}-config.yaml" />
+    <global-property name="env" value="dev" doc:name="Default environment"/>
+    <configuration-properties file="${env}-config.yaml" doc:name="Environment properties"/>
+    <secure-properties:config name="Secure_Properties_Config"
+                              file="${env}-secure-config.yaml"
+                              key="${secure.key}"
+                              doc:name="Secure Properties Config">
+        <secure-properties:encrypt algorithm="Blowfish"/>
+    </secure-properties:config>
+    <configuration defaultErrorHandler-ref="global-error-handler" doc:name="Default error handler"/>
 
-    <http:listener-config name="http-listener-config" doc:name="HTTP Listener Config">
-        <http:listener-connection host="${http.listener.host}" port="${http.listener.port}" />
+    <http:listener-config name="http-listener-config" basePath="${http.listener.base-path}" doc:name="HTTP Listener Config">
+        <http:listener-connection host="${http.listener.host}" port="${http.listener.port}"/>
     </http:listener-config>
 
-    <validation:config name="validation-config" doc:name="Validation Config" />
+    <validation:config name="validation-config" doc:name="Validation Config"/>
 
-    <db:config name="database-config" doc:name="Database Config">
+    <db:config name="database-config" doc:name="SQL Server Config">
         <db:mssql-connection host="${database.sqlserver.host}"
                              port="${database.sqlserver.port}"
                              user="${database.sqlserver.user}"
                              password="${secure::database.sqlserver.password}"
-                             databaseName="${database.sqlserver.name}" />
+                             databaseName="${database.sqlserver.name}">
+            <reconnection>
+                <reconnect frequency="2000" count="3"/>
+            </reconnection>
+            <db:pooling-profile maxPoolSize="${database.sqlserver.pool.max-size}"
+                                minPoolSize="${database.sqlserver.pool.min-size}"
+                                maxWait="${database.sqlserver.pool.max-wait-seconds}"
+                                maxWaitUnit="SECONDS"
+                                preparedStatementsCacheSize="20"/>
+            <db:connection-properties>
+                <db:connection-property key="encrypt" value="${database.sqlserver.encrypt}"/>
+                <db:connection-property key="trustServerCertificate" value="${database.sqlserver.trust-server-certificate}"/>
+                <db:connection-property key="loginTimeout" value="15"/>
+            </db:connection-properties>
+        </db:mssql-connection>
     </db:config>
+
+    <sftp:config name="sftp-config" doc:name="SFTP Config">
+        <sftp:connection host="${sftp.host}"
+                         port="${sftp.port}"
+                         username="${sftp.username}"
+                         password="${secure::sftp.password}"
+                         workingDir="${sftp.working-dir}">
+            <reconnection>
+                <reconnect frequency="3000" count="3"/>
+            </reconnection>
+        </sftp:connection>
+    </sftp:config>
 
     <email:smtp-config name="email-smtp-config" doc:name="Email SMTP Config">
         <email:smtp-connection host="${email.smtp.host}"
@@ -40,22 +75,20 @@ http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/sc
                                user="${email.smtp.user}"
                                password="${secure::email.smtp.password}">
             <email:properties>
-                <email:property key="mail.smtp.starttls.required" value="${email.smtp.starttls-required}" />
+                <email:property key="mail.smtp.starttls.enable" value="true"/>
+                <email:property key="mail.smtp.starttls.required" value="${email.smtp.starttls-required}"/>
             </email:properties>
         </email:smtp-connection>
     </email:smtp-config>
 
-    <ftp:config name="sftp-config" doc:name="SFTP Config">
-        <ftp:connection workingDir="${sftp.working-dir}"
-                        host="${sftp.host}"
-                        username="${sftp.username}"
-                        password="${secure::sftp.password}" />
-    </ftp:config>
-	<global-property doc:name="Global Property" doc:id="fde454ba-ba79-4c74-add4-7fdbaab060ab" name="env" value="dev" />
-	<configuration doc:name="Configuration" doc:id="e1e2c819-7507-4472-bb2c-51d2ce0dca32" defaultErrorHandler-ref="global-error-handler" />
-	<configuration-properties doc:name="Configuration properties" doc:id="24d3fd8c-91a6-4913-9580-042523eb94ed" file="${env}-secure-config.yaml" />
-	<secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="95e826fe-36ae-4ba5-a08a-635903771407" file="${env}-secure-config.yaml" key="${secure.key}" >
-		<secure-properties:encrypt algorithm="Blowfish" />
-	</secure-properties:config>
-
+    <os:config name="ObjectStore_Config" doc:name="Object Store Config"/>
+    <os:object-store name="Migration_Lock_Store"
+                     persistent="true"
+                     maxEntries="10"
+                     entryTtl="${migration.lock-ttl-minutes}"
+                     entryTtlUnit="MINUTES"
+                     expirationInterval="1"
+                     expirationIntervalUnit="MINUTES"
+                     config-ref="ObjectStore_Config"
+                     doc:name="Migration lock store"/>
 </mule>

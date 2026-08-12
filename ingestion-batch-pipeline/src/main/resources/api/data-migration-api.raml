@@ -1,0 +1,118 @@
+#%RAML 1.0
+title: Inventory Data Migration API
+version: v1
+baseUri: /api/v1
+mediaType: application/json
+
+types:
+  HealthResponse:
+    type: object
+    properties:
+      status: string
+      application: string
+      entity: string
+      checks: object
+      timestamp: datetime
+  TriggerRequest:
+    type: object
+    properties:
+      fileName?: string
+      dryRun?: boolean
+  AcceptedResponse:
+    type: object
+    properties:
+      jobId: string
+      status: string
+      entity: string
+      sourceFile: string
+      dryRun: boolean
+      message: string
+      statusUrl: string
+      timestamp: datetime
+  JobRecord:
+    type: object
+    properties:
+      jobId: string
+      entity: string
+      status: string
+      sourceFile?: string
+      startedAt?: datetime
+      completedAt?: datetime
+      totalRecords?: integer
+      successCount?: integer
+      failureCount?: integer
+      mergedCount?: integer
+      correlationId?: string
+      dryRun?: boolean
+      errorMessage?: string
+  ErrorResponse:
+    type: object
+    properties:
+      status: string
+      errorCode: string
+      message: string
+      timestamp: datetime
+
+/health:
+  get:
+    description: Process liveness probe. Does not call downstream systems.
+    responses:
+      200:
+        body:
+          application/json:
+            type: HealthResponse
+
+/ready:
+  get:
+    description: Readiness probe. Pings SQL Server.
+    responses:
+      200:
+        body:
+          application/json:
+            type: HealthResponse
+      503:
+        body:
+          application/json:
+            type: HealthResponse
+
+/migration/jobs:
+  post:
+    description: Start an inventory migration job. Returns 202 immediately.
+    body:
+      application/json:
+        type: TriggerRequest
+    responses:
+      202:
+        body:
+          application/json:
+            type: AcceptedResponse
+      409:
+        body:
+          application/json:
+            type: ErrorResponse
+  get:
+    description: List the 20 most recent migration jobs.
+    responses:
+      200:
+        body:
+          application/json:
+            type: object
+            properties:
+              count: integer
+              jobs: JobRecord[]
+
+/migration/jobs/{jobId}:
+  uriParameters:
+    jobId:
+      type: string
+  get:
+    description: Fetch a single migration job by id.
+    responses:
+      200:
+        body:
+          application/json:
+            type: JobRecord
+      404:
+        body:
+          application/json:
+            type: ErrorResponse

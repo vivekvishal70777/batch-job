@@ -2,15 +2,17 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Error Alert</title>
+    <title>Migration Alert</title>
 </head>
 <body>
     <h2>#[payload.headerLine]</h2>
-    <p><b>Batch:</b> #[payload.batch]</p>
+    <p><b>Job ID:</b> #[payload.jobId default payload.batch]</p>
     <p><b>Success:</b> #[payload.success]</p>
+    <p><b>Status:</b> #[payload.status]</p>
     <p><b>Flow Name:</b> #[payload.flowName]</p>
     <p><b>Error Code:</b> #[payload.errorCode]</p>
     <p><b>Message:</b> #[payload.message]</p>
+    <p><b>File Path:</b> #[payload.filePath]</p>
     <p><b>Timestamp:</b> #[payload.timestamp]</p>
 </body>
 </html>

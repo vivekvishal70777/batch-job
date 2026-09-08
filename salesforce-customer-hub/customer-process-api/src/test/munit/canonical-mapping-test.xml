@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="customer-process-api-munit-config"/>
+
+    <munit:test name="canonical-to-sfdc-composite-mapping" description="Process API maps canonical customer to Salesforce Composite">
+        <munit:behavior>
+            <munit:set-event>
+                <munit:payload value='{"account":{"name":"Northwind Manufacturing","industry":"Manufacturing"},"primaryContact":{"firstName":"Ana","lastName":"Diaz","email":"ana.diaz@northwind.example"}}' mediaType="application/json" encoding="UTF-8"/>
+            </munit:set-event>
+        </munit:behavior>
+        <munit:execution>
+            <ee:transform>
+                <ee:set-payload resource="dwl/to-sfdc-composite.dwl"/>
+            </ee:transform>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-equals actual="#[payload.account.name]" expected="#['Northwind Manufacturing']"/>
+            <munit-tools:assert-equals actual="#[payload.contact.lastName]" expected="#['Diaz']"/>
+            <munit-tools:assert-equals actual="#[payload.account.type]" expected="#['Customer']"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="merge-360-prefers-salesforce-account-name" description="360 merge uses Salesforce Name when present">
+        <munit:behavior>
+            <munit:set-event>
+                <munit:variables>
+                    <munit:variable key="sfdcAccount" value='{"Id":"001xx","Name":"Northwind Manufacturing","Type":"Customer","Industry":"Manufacturing"}' mediaType="application/json" encoding="UTF-8"/>
+                    <munit:variable key="erpCustomer" value='{"erpCustomerId":"ERP-1","name":"Northwind","creditStatus":"GOOD"}' mediaType="application/json" encoding="UTF-8"/>
+                    <munit:variable key="customerMapping" value='{"customerId":"CUST-1","salesforceAccountId":"001xx","erpCustomerId":"ERP-1"}' mediaType="application/json" encoding="UTF-8"/>
+                    <munit:variable key="customerId" value="CUST-1" mediaType="application/java" encoding="UTF-8"/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        <munit:execution>
+            <ee:transform>
+                <ee:set-payload resource="dwl/merge-360.dwl"/>
+            </ee:transform>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-equals actual="#[payload.account.name]" expected="#['Northwind Manufacturing']"/>
+            <munit-tools:assert-equals actual="#[payload.erp.creditStatus]" expected="#['GOOD']"/>
+            <munit-tools:assert-equals actual="#[payload.customerId]" expected="#['CUST-1']"/>
+        </munit:validation>
+    </munit:test>
+</mule>

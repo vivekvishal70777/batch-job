@@ -1,0 +1,113 @@
+#%RAML 1.0
+title: Customer Process API
+version: v1
+baseUri: http://localhost:8082/api/{version}
+mediaType: application/json
+description: Canonical customer orchestration between Salesforce and ERP.
+
+types:
+  Error:
+    properties:
+      correlationId: string
+      apiName: string
+      errorCode: string
+      httpStatus: integer
+      message: string
+      timestamp: datetime
+  Address:
+    properties:
+      city?: string
+      state?: string
+      country?: string
+      postalCode?: string
+  CanonicalCustomer:
+    properties:
+      customerId?: string
+      account:
+        properties:
+          name: string
+          type?: string
+          industry?: string
+          billing?: Address
+      primaryContact:
+        properties:
+          firstName?: string
+          lastName: string
+          email?: string
+          phone?: string
+      status?: string
+  CaseCreate:
+    properties:
+      subject: string
+      description?: string
+      origin?: string
+      priority?: string
+  CdcEvent:
+    properties:
+      replayId: string
+      entityName: string
+      changeType: string
+      recordIds: array
+      payload?: object
+      origin?: string
+
+/customers:
+  post:
+    headers:
+      Idempotency-Key?:
+        type: string
+      X-Correlation-Id?:
+        type: string
+    body:
+      type: CanonicalCustomer
+    responses:
+      201:
+        body:
+          application/json:
+      409:
+        body:
+          application/json:
+            type: Error
+  /{customerId}:
+    get:
+      responses:
+        200:
+          body:
+            application/json:
+        404:
+          body:
+            application/json:
+              type: Error
+    /cases:
+      post:
+        body:
+          type: CaseCreate
+        responses:
+          201:
+            body:
+              application/json:
+
+/customers/sync/bulk:
+  post:
+    description: Nightly ERP to Salesforce Bulk 2.0 reconcile
+    responses:
+      202:
+        body:
+          application/json:
+
+/events/salesforce-cdc:
+  post:
+    description: Salesforce CDC / Platform Event style webhook
+    body:
+      type: CdcEvent
+    responses:
+      202:
+        body:
+          application/json:
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:

@@ -1,0 +1,74 @@
+#%RAML 1.0
+title: ERP Customer System API
+version: v1
+baseUri: http://localhost:8084/api/{version}
+mediaType: application/json
+
+types:
+  Error:
+    properties:
+      correlationId: string
+      apiName: string
+      errorCode: string
+      httpStatus: integer
+      message: string
+      timestamp: datetime
+  ErpCustomer:
+    properties:
+      erpCustomerId?: string
+      name: string
+      email?: string
+      creditStatus?: string
+      salesforceAccountId?: string
+
+/customers:
+  post:
+    body:
+      type: ErpCustomer
+    responses:
+      201:
+        body:
+          application/json:
+  /{erpCustomerId}:
+    get:
+      responses:
+        200:
+          body:
+            application/json:
+        404:
+          body:
+            application/json:
+              type: Error
+    patch:
+      body:
+        type: ErpCustomer
+      responses:
+        200:
+          body:
+            application/json:
+  /by-salesforce/{salesforceAccountId}:
+    get:
+      responses:
+        200:
+          body:
+            application/json:
+        404:
+          body:
+            application/json:
+              type: Error
+
+/customers/export:
+  get:
+    queryParameters:
+      since?: datetime
+    responses:
+      200:
+        body:
+          application/json:
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:

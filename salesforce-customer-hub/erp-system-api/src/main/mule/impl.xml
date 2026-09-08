@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <flow name="erp-system-api-main">
+        <http:listener config-ref="http-listener-config" path="${http.listener.basePath}">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {} ++ {"X-Correlation-Id": vars.correlationId default correlationId}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers>#[vars.outboundHeaders default {} ++ {"X-Correlation-Id": vars.correlationId default correlationId}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <set-variable variableName="correlationId"
+                      value="#[attributes.headers['x-correlation-id'] default attributes.headers['X-Correlation-Id'] default correlationId]"/>
+        <apikit:router config-ref="erp-system-api-config"/>
+    </flow>
+
+    <flow name="get:\health:erp-system-api-config">
+        <set-payload value="#[{ api: p('api.name'), status: 'UP', timestamp: now() }]" mimeType="application/json"/>
+    </flow>
+
+    <flow name="post:\customers:erp-system-api-config">
+        <ee:transform>
+            <ee:set-variable variableName="erpCustomerId"><![CDATA[%dw 2.0
+output application/java
+---
+payload.erpCustomerId default ("ERP-" ++ (uuid() replace "-" with "")[0 to 7] as String)]]></ee:set-variable>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  erpCustomerId: vars.erpCustomerId,
+  name: payload.name,
+  email: payload.email,
+  creditStatus: payload.creditStatus default "GOOD",
+  salesforceAccountId: payload.salesforceAccountId,
+  updatedAt: now()
+}]]></ee:set-payload>
+        </ee:transform>
+        <os:store key="#[vars.erpCustomerId]" objectStore="erp-customer-store">
+            <os:value><![CDATA[#[payload]]]></os:value>
+        </os:store>
+        <choice>
+            <when expression="#[!isEmpty(payload.salesforceAccountId)]">
+                <os:store key="#[payload.salesforceAccountId]" objectStore="erp-sfdc-index">
+                    <os:value><![CDATA[#[vars.erpCustomerId]]]></os:value>
+                </os:store>
+            </when>
+        </choice>
+        <set-variable variableName="httpStatus" value="201"/>
+    </flow>
+
+    <flow name="get:\customers\(erpCustomerId):erp-system-api-config">
+        <set-variable variableName="erpCustomerId" value="#[attributes.uriParams.erpCustomerId]"/>
+        <try>
+            <os:retrieve key="#[vars.erpCustomerId]" objectStore="erp-customer-store"/>
+            <error-handler>
+                <on-error-propagate type="OS:KEY_NOT_FOUND">
+                    <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="#['ERP customer not found: ' ++ vars.erpCustomerId]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+    </flow>
+
+    <flow name="patch:\customers\(erpCustomerId):erp-system-api-config">
+        <set-variable variableName="erpCustomerId" value="#[attributes.uriParams.erpCustomerId]"/>
+        <set-variable variableName="patchBody" value="#[payload]"/>
+        <try>
+            <os:retrieve key="#[vars.erpCustomerId]" objectStore="erp-customer-store" target="existing"/>
+            <error-handler>
+                <on-error-propagate type="OS:KEY_NOT_FOUND">
+                    <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="#['ERP customer not found: ' ++ vars.erpCustomerId]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        <ee:transform>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.existing ++ vars.patchBody ++ { erpCustomerId: vars.erpCustomerId, updatedAt: now() }]]></ee:set-payload>
+        </ee:transform>
+        <os:store key="#[vars.erpCustomerId]" objectStore="erp-customer-store">
+            <os:value><![CDATA[#[payload]]]></os:value>
+        </os:store>
+    </flow>
+
+    <flow name="get:\customers\by-salesforce\(salesforceAccountId):erp-system-api-config">
+        <set-variable variableName="salesforceAccountId" value="#[attributes.uriParams.salesforceAccountId]"/>
+        <try>
+            <os:retrieve key="#[vars.salesforceAccountId]" objectStore="erp-sfdc-index" target="erpCustomerId"/>
+            <os:retrieve key="#[vars.erpCustomerId]" objectStore="erp-customer-store"/>
+            <error-handler>
+                <on-error-propagate type="OS:KEY_NOT_FOUND">
+                    <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="No ERP customer mapped to Salesforce Account"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+    </flow>
+
+    <flow name="get:\customers\export:erp-system-api-config">
+        <set-payload value="#[{ records: [], watermark: now(), message: 'Local mock has no durable change log; production would query ERP delta since watermark' }]"
+                     mimeType="application/json"/>
+    </flow>
+</mule>

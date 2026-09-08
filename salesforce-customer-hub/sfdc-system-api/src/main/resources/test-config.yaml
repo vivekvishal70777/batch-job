@@ -1,0 +1,27 @@
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8083"
+    basePath: "/api/*"
+
+api:
+  name: "sfdc-system-api"
+  version: "v1"
+
+salesforce:
+  mode: "mock"
+  loginUrl: "https://login.salesforce.com"
+  clientId: ""
+  clientSecret: ""
+  username: ""
+  password: ""
+  token: ""
+  apiVersion: "v61.0"
+  compositePath: "/services/data/v61.0/composite"
+  sobjectsPath: "/services/data/v61.0/sobjects"
+  queryPath: "/services/data/v61.0/query"
+  bulkPath: "/services/data/v61.0/jobs/ingest"
+
+retry:
+  maxRetries: "3"
+  millisBetween: "2000"

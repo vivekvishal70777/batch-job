@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <!-- Live Salesforce REST. Host is instance URL after OAuth; simplified as login host + path for sandbox Connected Apps that return instance_url. -->
+    <sub-flow name="sfdc-live-dispatch">
+        <choice>
+            <when expression="#[vars.sfdcOperation == 'GET_ACCOUNT']">
+                <http:request method="GET" config-ref="salesforce-http-request"
+                              path="#['/services/data/' ++ p('salesforce.apiVersion') ++ '/sobjects/Account/' ++ vars.accountId]">
+                    <http:headers><![CDATA[#[output application/java
+---
+{ Authorization: "Bearer " ++ vars.sfdcAccessToken }]]]></http:headers>
+                </http:request>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'CREATE_ACCOUNT']">
+                <ee:transform>
+                    <ee:set-payload resource="dwl/account-sobject.dwl"/>
+                </ee:transform>
+                <http:request method="POST" config-ref="salesforce-http-request"
+                              path="#['/services/data/' ++ p('salesforce.apiVersion') ++ '/sobjects/Account']">
+                    <http:headers><![CDATA[#[output application/java
+---
+{
+  Authorization: "Bearer " ++ vars.sfdcAccessToken,
+  "Content-Type": "application/json"
+}]]]></http:headers>
+                </http:request>
+                <set-variable variableName="httpStatus" value="201"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'COMPOSITE']">
+                <ee:transform>
+                    <ee:set-payload resource="dwl/composite-account-contact.dwl"/>
+                </ee:transform>
+                <until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.millisBetween}">
+                    <http:request method="POST" config-ref="salesforce-http-request"
+                                  path="#['/services/data/' ++ p('salesforce.apiVersion') ++ '/composite']">
+                        <http:headers><![CDATA[#[output application/java
+---
+{
+  Authorization: "Bearer " ++ vars.sfdcAccessToken,
+  "Content-Type": "application/json"
+}]]]></http:headers>
+                    </http:request>
+                </until-successful>
+                <ee:transform>
+                    <ee:set-payload resource="dwl/composite-response.dwl"/>
+                </ee:transform>
+                <set-variable variableName="httpStatus" value="201"/>
+            </when>
+            <otherwise>
+                <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="Live operation not implemented in this sample; use mock or extend sfdc-live-dispatch"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+</mule>

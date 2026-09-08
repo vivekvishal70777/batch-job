@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd">
+
+    <flow name="sfdc-system-api-main">
+        <http:listener config-ref="http-listener-config" path="${http.listener.basePath}">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {} ++ {"X-Correlation-Id": vars.correlationId default correlationId}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers>#[vars.outboundHeaders default {} ++ {"X-Correlation-Id": vars.correlationId default correlationId}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <set-variable variableName="correlationId"
+                      value="#[attributes.headers['x-correlation-id'] default attributes.headers['X-Correlation-Id'] default correlationId]"/>
+        <logger level="INFO"
+                message="#['sfdc-system-api ' ++ attributes.method ++ ' ' ++ attributes.requestPath ++ ' correlationId=' ++ vars.correlationId]"/>
+        <apikit:router config-ref="sfdc-system-api-config"/>
+    </flow>
+
+    <flow name="get:\health:sfdc-system-api-config">
+        <set-payload value="#[{ api: p('api.name'), status: 'UP', mode: p('salesforce.mode'), timestamp: now() }]"
+                     mimeType="application/json"/>
+    </flow>
+</mule>

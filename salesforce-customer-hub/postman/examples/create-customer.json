@@ -1,0 +1,12 @@
+{
+  "companyName": "Northwind Manufacturing",
+  "industry": "Manufacturing",
+  "city": "Austin",
+  "state": "TX",
+  "country": "US",
+  "postalCode": "78701",
+  "contactFirstName": "Ana",
+  "contactLastName": "Diaz",
+  "email": "ana.diaz@northwind.example",
+  "phone": "+1-512-555-0142"
+}

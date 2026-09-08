@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <flow name="post:\events\salesforce-cdc:customer-process-api-config">
+        <set-variable variableName="cdcEvent" value="#[payload]"/>
+        <choice>
+            <when expression="#[(payload.origin default '') == 'MULE']">
+                <set-payload value="#[{ status: 'IGNORED', reason: 'loop-prevention', replayId: payload.replayId }]"
+                             mimeType="application/json"/>
+                <set-variable variableName="httpStatus" value="202"/>
+            </when>
+            <otherwise>
+                <try>
+                    <os:retrieve key="#[payload.replayId]" objectStore="cdc-replay-store"/>
+                    <set-payload value="#[{ status: 'DUPLICATE', replayId: vars.cdcEvent.replayId }]" mimeType="application/json"/>
+                    <set-variable variableName="httpStatus" value="202"/>
+                    <error-handler>
+                        <on-error-continue type="OS:KEY_NOT_FOUND">
+                            <os:store key="#[vars.cdcEvent.replayId]" objectStore="cdc-replay-store">
+                                <os:value><![CDATA[#[now() as String]]]></os:value>
+                            </os:store>
+                            <choice>
+                                <when expression="#[vars.cdcEvent.entityName == 'Account']">
+                                    <try>
+                                        <http:request method="GET" config-ref="erp-sys-http"
+                                                      path="#['/customers/by-salesforce/' ++ (vars.cdcEvent.recordIds[0] default 'unknown')]">
+                                            <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+                                        </http:request>
+                                        <http:request method="PATCH" config-ref="erp-sys-http"
+                                                      path="#['/customers/' ++ payload.erpCustomerId]">
+                                            <http:body><![CDATA[#[output application/json
+---
+{ name: vars.cdcEvent.payload.Name default payload.name }]]]></http:body>
+                                            <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+                                        </http:request>
+                                        <error-handler>
+                                            <on-error-continue type="HTTP:*">
+                                                <logger level="WARN" message="#['CDC Account change had no ERP mapping recordId=' ++ (vars.cdcEvent.recordIds[0] default '')]"/>
+                                            </on-error-continue>
+                                        </error-handler>
+                                    </try>
+                                </when>
+                            </choice>
+                            <set-payload value="#[{ status: 'ACCEPTED', replayId: vars.cdcEvent.replayId, entityName: vars.cdcEvent.entityName }]"
+                                         mimeType="application/json"/>
+                            <set-variable variableName="httpStatus" value="202"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="post:\customers\sync\bulk:customer-process-api-config">
+        <try>
+            <os:retrieve key="erp-to-sfdc" objectStore="bulk-watermark-store" target="watermark"/>
+            <error-handler>
+                <on-error-continue type="OS:KEY_NOT_FOUND">
+                    <set-variable variableName="watermark" value="#[now() - |P1D|]"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+        <http:request method="GET" config-ref="erp-sys-http" path="/customers/export">
+            <http:query-params><![CDATA[#[output application/java
+---
+{ since: vars.watermark as String }]]]></http:query-params>
+            <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+        </http:request>
+        <ee:transform>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  objectType: "Account",
+  operation: "upsert",
+  externalIdField: "ERP_Customer_Id__c",
+  records: payload.records default []
+}]]></ee:set-payload>
+        </ee:transform>
+        <http:request method="POST" config-ref="sfdc-sys-http" path="/bulk/accounts">
+            <http:headers><![CDATA[#[output application/java
+---
+{ "X-Correlation-Id": vars.correlationId }]]]></http:headers>
+        </http:request>
+        <os:store key="erp-to-sfdc" objectStore="bulk-watermark-store">
+            <os:value><![CDATA[#[now() as String]]]></os:value>
+        </os:store>
+        <set-variable variableName="httpStatus" value="202"/>
+        <ee:transform>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  status: "ACCEPTED",
+  job: payload,
+  watermarkAdvancedTo: now()
+}]]></ee:set-payload>
+        </ee:transform>
+    </flow>
+</mule>

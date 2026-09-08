@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <sub-flow name="sfdc-mock-dispatch">
+        <choice>
+            <when expression="#[vars.sfdcOperation == 'GET_ACCOUNT']">
+                <flow-ref name="sfdc-mock-get-account"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'CREATE_ACCOUNT']">
+                <flow-ref name="sfdc-mock-create-account"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'PATCH_ACCOUNT']">
+                <flow-ref name="sfdc-mock-patch-account"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'LIST_CONTACTS']">
+                <flow-ref name="sfdc-mock-list-contacts"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'COMPOSITE']">
+                <flow-ref name="sfdc-mock-composite"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'LIST_CASES']">
+                <flow-ref name="sfdc-mock-list-cases"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'CREATE_CASE']">
+                <flow-ref name="sfdc-mock-create-case"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'QUERY']">
+                <flow-ref name="sfdc-mock-query"/>
+            </when>
+            <when expression="#[vars.sfdcOperation == 'BULK']">
+                <flow-ref name="sfdc-mock-bulk"/>
+            </when>
+            <otherwise>
+                <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="Unknown mock operation"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-create-account">
+        <ee:transform>
+            <ee:set-variable variableName="mockAccountId"><![CDATA[%dw 2.0
+output application/java
+---
+"001" ++ (uuid() replace "-" with "")[0 to 14]]]></ee:set-variable>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  Id: vars.mockAccountId,
+  Name: payload.name,
+  Type: payload.type default "Customer",
+  Industry: payload.industry,
+  BillingCity: payload.billing.city,
+  BillingState: payload.billing.state,
+  BillingCountry: payload.billing.country,
+  BillingPostalCode: payload.billing.postalCode
+}]]></ee:set-payload>
+        </ee:transform>
+        <os:store key="#[vars.mockAccountId]" objectStore="sfdc-mock-store">
+            <os:value><![CDATA[#[payload]]]></os:value>
+        </os:store>
+        <set-payload value="#[{ id: vars.mockAccountId, success: true, errors: [] }]" mimeType="application/json"/>
+        <set-variable variableName="httpStatus" value="201"/>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-get-account">
+        <try>
+            <os:retrieve key="#[vars.accountId]" objectStore="sfdc-mock-store"/>
+            <error-handler>
+                <on-error-propagate type="OS:KEY_NOT_FOUND">
+                    <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="#['Account not found: ' ++ vars.accountId]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-patch-account">
+        <flow-ref name="sfdc-mock-get-account"/>
+        <ee:transform>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {
+  Name: vars.patchBody.name default payload.Name,
+  Type: vars.patchBody.type default payload.Type,
+  Industry: vars.patchBody.industry default payload.Industry
+}]]></ee:set-payload>
+        </ee:transform>
+        <os:store key="#[vars.accountId]" objectStore="sfdc-mock-store">
+            <os:value><![CDATA[#[payload]]]></os:value>
+        </os:store>
+        <set-payload value="#[{ id: vars.accountId, success: true }]" mimeType="application/json"/>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-composite">
+        <set-payload value="#[payload.account]"/>
+        <flow-ref name="sfdc-mock-create-account"/>
+        <set-variable variableName="createdAccountId" value="#[payload.id]"/>
+        <ee:transform>
+            <ee:set-variable variableName="mockContactId"><![CDATA[%dw 2.0
+output application/java
+---
+"003" ++ (uuid() replace "-" with "")[0 to 14]]]></ee:set-variable>
+        </ee:transform>
+        <os:store key="#[vars.mockContactId]" objectStore="sfdc-mock-store">
+            <os:value><![CDATA[#[{
+  Id: vars.mockContactId,
+  AccountId: vars.createdAccountId,
+  FirstName: vars.compositeBody.contact.firstName,
+  LastName: vars.compositeBody.contact.lastName,
+  Email: vars.compositeBody.contact.email,
+  Phone: vars.compositeBody.contact.phone
+}]]]></os:value>
+        </os:store>
+        <set-payload value="#[{
+  compositeResponse: [
+    { httpStatusCode: 201, body: { id: vars.createdAccountId } },
+    { httpStatusCode: 201, body: { id: vars.mockContactId } }
+  ]
+}]" mimeType="application/json"/>
+        <set-variable variableName="httpStatus" value="201"/>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-list-contacts">
+        <set-payload value="#[{ records: [] }]" mimeType="application/json"/>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-list-cases">
+        <set-payload value="#[{ records: [] }]" mimeType="application/json"/>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-create-case">
+        <ee:transform>
+            <ee:set-variable variableName="mockCaseId"><![CDATA[%dw 2.0
+output application/java
+---
+"500" ++ (uuid() replace "-" with "")[0 to 14]]]></ee:set-variable>
+        </ee:transform>
+        <set-payload value="#[{ id: vars.mockCaseId, success: true }]" mimeType="application/json"/>
+        <set-variable variableName="httpStatus" value="201"/>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-query">
+        <set-payload value="#[{ totalSize: 0, done: true, records: [] }]" mimeType="application/json"/>
+    </sub-flow>
+
+    <sub-flow name="sfdc-mock-bulk">
+        <set-payload value="#[{
+          id: '750' ++ (uuid() replace '-' with '')[0 to 14],
+          state: 'JobComplete',
+          object: 'Account',
+          operation: 'upsert',
+          numberRecordsProcessed: sizeOf(payload.records default [])
+        }]" mimeType="application/json"/>
+        <set-variable variableName="httpStatus" value="202"/>
+    </sub-flow>
+</mule>

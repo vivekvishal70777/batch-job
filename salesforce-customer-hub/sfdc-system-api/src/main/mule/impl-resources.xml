@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+
+    <flow name="post:\accounts:sfdc-system-api-config">
+        <set-variable variableName="sfdcOperation" value="CREATE_ACCOUNT"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+
+    <flow name="get:\accounts\(accountId):sfdc-system-api-config">
+        <set-variable variableName="accountId" value="#[attributes.uriParams.accountId]"/>
+        <set-variable variableName="sfdcOperation" value="GET_ACCOUNT"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+
+    <flow name="patch:\accounts\(accountId):sfdc-system-api-config">
+        <set-variable variableName="accountId" value="#[attributes.uriParams.accountId]"/>
+        <set-variable variableName="patchBody" value="#[payload]"/>
+        <set-variable variableName="sfdcOperation" value="PATCH_ACCOUNT"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+
+    <flow name="get:\accounts\(accountId)\contacts:sfdc-system-api-config">
+        <set-variable variableName="accountId" value="#[attributes.uriParams.accountId]"/>
+        <set-variable variableName="sfdcOperation" value="LIST_CONTACTS"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+
+    <flow name="post:\composite\account-contact:sfdc-system-api-config">
+        <set-variable variableName="compositeBody" value="#[payload]"/>
+        <set-variable variableName="sfdcOperation" value="COMPOSITE"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+        <choice>
+            <when expression="#[p('salesforce.mode') == 'mock']">
+                <set-payload value="#[{
+                  accountId: payload.compositeResponse[0].body.id,
+                  contactId: payload.compositeResponse[1].body.id,
+                  success: true
+                }]" mimeType="application/json"/>
+            </when>
+        </choice>
+    </flow>
+
+    <flow name="get:\cases:sfdc-system-api-config">
+        <set-variable variableName="accountId" value="#[attributes.queryParams.accountId]"/>
+        <set-variable variableName="sfdcOperation" value="LIST_CASES"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+
+    <flow name="post:\cases:sfdc-system-api-config">
+        <set-variable variableName="sfdcOperation" value="CREATE_CASE"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+
+    <flow name="post:\query:sfdc-system-api-config">
+        <choice>
+            <when expression="#[!(payload.q default '' startsWith 'SELECT')]">
+                <raise-error type="CUSTOM:RESOURCE_NOT_FOUND" description="Only SELECT SOQL is allowed on the System API"/>
+            </when>
+        </choice>
+        <set-variable variableName="sfdcOperation" value="QUERY"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+
+    <flow name="post:\bulk\accounts:sfdc-system-api-config">
+        <set-variable variableName="sfdcOperation" value="BULK"/>
+        <flow-ref name="sfdc-route-mock-or-live"/>
+    </flow>
+</mule>

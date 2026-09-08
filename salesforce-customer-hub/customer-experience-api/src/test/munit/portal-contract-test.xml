@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="customer-experience-api-munit-config"/>
+
+    <munit:test name="portal-payload-does-not-leak-salesforce-ids" description="Experience write contract maps to canonical without Salesforce field names">
+        <munit:behavior>
+            <munit:set-event>
+                <munit:payload value='{"companyName":"Northwind Manufacturing","industry":"Manufacturing","city":"Austin","contactFirstName":"Ana","contactLastName":"Diaz","email":"ana.diaz@northwind.example"}' mediaType="application/json" encoding="UTF-8"/>
+            </munit:set-event>
+        </munit:behavior>
+        <munit:execution>
+            <ee:transform>
+                <ee:set-payload resource="dwl/to-canonical.dwl"/>
+            </ee:transform>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-equals actual="#[payload.account.name]" expected="#['Northwind Manufacturing']"/>
+            <munit-tools:assert-equals actual="#[payload.primaryContact.lastName]" expected="#['Diaz']"/>
+            <munit-tools:assert-that expression="#[payload.account.Name default null]" is="#[MunitTools::nullValue()]"/>
+        </munit:validation>
+    </munit:test>
+</mule>

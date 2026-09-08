@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="sfdc-system-api-munit-config"/>
+
+    <munit:test name="composite-request-includes-account-and-contact" description="DataWeave Composite payload for Salesforce">
+        <munit:behavior>
+            <munit:set-event>
+                <munit:payload value='{"account":{"name":"Northwind Manufacturing","type":"Customer","industry":"Manufacturing","billing":{"city":"Austin","state":"TX","country":"US","postalCode":"78701"}},"contact":{"firstName":"Ana","lastName":"Diaz","email":"ana.diaz@northwind.example","phone":"+1-512-555-0142"}}' mediaType="application/json" encoding="UTF-8"/>
+            </munit:set-event>
+        </munit:behavior>
+        <munit:execution>
+            <ee:transform>
+                <ee:set-payload resource="dwl/composite-account-contact.dwl"/>
+            </ee:transform>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-equals actual="#[sizeOf(payload.compositeRequest)]" expected="#[2]"/>
+            <munit-tools:assert-equals actual="#[payload.compositeRequest[0].body.Name]" expected="#['Northwind Manufacturing']"/>
+            <munit-tools:assert-equals actual="#[payload.compositeRequest[1].body.LastName]" expected="#['Diaz']"/>
+            <munit-tools:assert-that expression="#[payload.allOrNone]" is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+</mule>

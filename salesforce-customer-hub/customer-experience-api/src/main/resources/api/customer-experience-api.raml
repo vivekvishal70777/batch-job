@@ -1,0 +1,73 @@
+#%RAML 1.0
+title: Customer Experience API
+version: v1
+baseUri: http://localhost:8081/api/{version}
+mediaType: application/json
+description: Portal/mobile facade. No Salesforce field names leak through this contract.
+
+types:
+  Error:
+    properties:
+      correlationId: string
+      apiName: string
+      errorCode: string
+      httpStatus: integer
+      message: string
+      timestamp: datetime
+  CustomerWrite:
+    properties:
+      companyName: string
+      industry?: string
+      city?: string
+      state?: string
+      country?: string
+      postalCode?: string
+      contactFirstName?: string
+      contactLastName: string
+      email?: string
+      phone?: string
+  CaseWrite:
+    properties:
+      subject: string
+      description?: string
+      priority?: string
+
+/customers:
+  post:
+    headers:
+      Idempotency-Key?:
+        type: string
+      Authorization?:
+        type: string
+        description: Bearer JWT enforced at API Manager in production
+    body:
+      type: CustomerWrite
+    responses:
+      201:
+        body:
+          application/json:
+  /{customerId}:
+    get:
+      responses:
+        200:
+          body:
+            application/json:
+        404:
+          body:
+            application/json:
+              type: Error
+    /cases:
+      post:
+        body:
+          type: CaseWrite
+        responses:
+          201:
+            body:
+              application/json:
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:

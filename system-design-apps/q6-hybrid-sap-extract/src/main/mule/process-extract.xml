@@ -21,7 +21,7 @@
     </http:request>
     <set-variable variableName="page" value="#[payload]"/>
     <foreach collection="#[vars.page.records default []]">
-      <os:store key="#['doc-' ++ payload.docNumber as String]" objectStore="jobs-store">
+      <os:store key="#['doc-' ++ (payload.docNumber as String)]" objectStore="jobs-store">
         <os:value><![CDATA[#[payload]]]></os:value>
       </os:store>
       <set-variable variableName="afterDoc" value="#[payload.docNumber]"/>

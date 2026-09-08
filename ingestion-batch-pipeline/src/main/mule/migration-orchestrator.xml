@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd">
+
+    <flow name="migration-orchestrator-flow">
+        <logger level="INFO" doc:name="Start orchestrator"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'migration-orchestrator-flow', 'Start')]"/>
+        <set-variable variableName="flowName" value="migration-orchestrator-flow"/>
+        <ee:transform doc:name="Mark job running">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
+---
+p('query.update-job-running')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{ jobId: vars.jobId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-update-sub-flow"/>
+        <flow-ref name="read-source-file-sub-flow"/>
+        <choice doc:name="Reject empty source">
+            <when expression="#[payload == null or (payload is Array and isEmpty(payload))]">
+                <raise-error type="APP:NO_SOURCE" description="Source file is missing or contains no records"/>
+            </when>
+        </choice>
+        <ee:transform doc:name="Map inventory records">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::inventoryMapper
+output application/java
+var mapped = payload map (row) -> toInventoryRecord(row, vars.jobId)
+---
+mapped groupBy (item) -> (item.SKU as String) ++ "|" ++ (item.StoreId as String)
+    pluck $[sizeOf($) - 1]]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <batch:job jobName="inventory-migration-batch"
+                   jobInstanceId="#[vars.jobId]"
+                   maxFailedRecords="${batch.max-failed-records}"
+                   blockSize="${batch.block-size}"
+                   maxConcurrency="${batch.max-concurrency}">
+            <batch:process-records>
+                <batch:step name="validate-record-step">
+                    <flow-ref name="validate-record-sub-flow"/>
+                </batch:step>
+                <batch:step name="persist-valid-records-step" acceptPolicy="NO_FAILURES">
+                    <choice doc:name="Skip writes on dry run">
+                        <when expression="#[vars.dryRun == true]">
+                            <logger level="DEBUG" doc:name="Dry run skip"
+                                    message="#[import * from dwl::common --- logLine(vars.jobId, 'persist-valid-records-step', 'Dry run; skipping staging insert')]"/>
+                        </when>
+                        <otherwise>
+                            <batch:aggregator size="${batch.block-size}" streaming="true" preserveMimeTypes="true">
+                                <try doc:name="Bulk insert staging">
+                                    <set-variable variableName="query" value="${query.insert-staging}"/>
+                                    <flow-ref name="bulk-write-sub-flow"/>
+                                    <error-handler>
+                                        <on-error-propagate type="ANY">
+                                            <logger level="ERROR" doc:name="Log staging insert failure"
+                                                    message="#[import * from dwl::common --- logLine(vars.jobId, 'persist-valid-records-step', 'Staging insert failed: ' ++ (error.description default 'unknown'))]"/>
+                                        </on-error-propagate>
+                                    </error-handler>
+                                </try>
+                            </batch:aggregator>
+                        </otherwise>
+                    </choice>
+                </batch:step>
+                <batch:step name="persist-error-records-step" acceptPolicy="ONLY_FAILURES">
+                    <flow-ref name="attach-error-description-sub-flow"/>
+                    <choice doc:name="Skip error writes on dry run">
+                        <when expression="#[vars.dryRun == true]">
+                            <logger level="DEBUG" doc:name="Dry run skip errors"
+                                    message="#[import * from dwl::common --- logLine(vars.jobId, 'persist-error-records-step', 'Dry run; skipping error insert')]"/>
+                        </when>
+                        <otherwise>
+                            <batch:aggregator size="${batch.block-size}" streaming="true" preserveMimeTypes="true">
+                                <try doc:name="Bulk insert errors">
+                                    <set-variable variableName="query" value="${query.insert-error}"/>
+                                    <flow-ref name="bulk-write-sub-flow"/>
+                                    <error-handler>
+                                        <on-error-propagate type="ANY">
+                                            <logger level="ERROR" doc:name="Log error insert failure"
+                                                    message="#[import * from dwl::common --- logLine(vars.jobId, 'persist-error-records-step', 'Error insert failed: ' ++ (error.description default 'unknown'))]"/>
+                                        </on-error-propagate>
+                                    </error-handler>
+                                </try>
+                            </batch:aggregator>
+                        </otherwise>
+                    </choice>
+                </batch:step>
+            </batch:process-records>
+            <batch:on-complete>
+                <try doc:name="Complete migration">
+                    <ee:transform doc:name="Capture batch statistics">
+                        <ee:message/>
+                        <ee:variables>
+                            <ee:set-variable variableName="totalRecords"><![CDATA[%dw 2.0
+output application/java
+---
+payload.totalRecords default 0]]></ee:set-variable>
+                            <ee:set-variable variableName="successCount"><![CDATA[%dw 2.0
+output application/java
+---
+payload.successfulRecords default 0]]></ee:set-variable>
+                            <ee:set-variable variableName="failureCount"><![CDATA[%dw 2.0
+output application/java
+---
+payload.failedRecords default 0]]></ee:set-variable>
+                            <ee:set-variable variableName="elapsedMs"><![CDATA[%dw 2.0
+output application/java
+---
+payload.elapsedTimeInMillis default 0]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <logger level="INFO" doc:name="Log batch stats"
+                            message="#[import * from dwl::common --- logLine(vars.jobId, 'migration-orchestrator-flow', 'Batch complete total=' ++ (vars.totalRecords as String) ++ ' success=' ++ (vars.successCount as String) ++ ' failed=' ++ (vars.failureCount as String))]"/>
+                    <choice doc:name="Load vs dry run">
+                        <when expression="#[vars.dryRun == true]">
+                            <set-variable variableName="jobStatus" value="#[if (vars.failureCount as Number) &gt; 0 then 'PARTIAL' else 'COMPLETED']"/>
+                            <set-variable variableName="mergedCount" value="0"/>
+                        </when>
+                        <otherwise>
+                            <flow-ref name="merge-and-reconcile-sub-flow"/>
+                            <flow-ref name="export-results-sub-flow"/>
+                            <flow-ref name="archive-and-audit-sub-flow"/>
+                        </otherwise>
+                    </choice>
+                    <flow-ref name="complete-job-sub-flow"/>
+                    <flow-ref name="release-migration-lock-sub-flow"/>
+                    <ee:transform doc:name="Build completion notification">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::apiResponses
+output application/java
+var failed = (vars.failureCount default 0) as Number
+var status = vars.jobStatus default "COMPLETED"
+---
+notificationPayload(
+    if (status == "FAILED") "!!! Alert Migration Failed"
+    else if (status == "PARTIAL") "Migration completed with errors"
+    else "Migration completed",
+    vars.jobId,
+    "Processed " ++ ((vars.totalRecords default 0) as String) ++ " records, merged " ++ ((vars.mergedCount default 0) as String) ++ ", failed " ++ (failed as String) ++ ".",
+    vars.sourcePath,
+    {
+        success: status != "FAILED",
+        status: status,
+        totalRecords: vars.totalRecords,
+        successCount: vars.successCount,
+        failureCount: vars.failureCount,
+        mergedCount: vars.mergedCount,
+        elapsedMs: vars.elapsedMs,
+        dryRun: vars.dryRun
+    }
+)]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                    <flow-ref name="send-email-sub-flow"/>
+                    <error-handler ref="global-error-handler"/>
+                </try>
+                <logger level="INFO" doc:name="End orchestrator"
+                        message="#[import * from dwl::common --- logLine(vars.jobId, 'migration-orchestrator-flow', 'End status=' ++ (vars.jobStatus default 'UNKNOWN'))]"/>
+            </batch:on-complete>
+        </batch:job>
+    </flow>
+</mule>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="initialize-context-munit-config"/>
+
+    <munit:test name="initialize-job-context-sets-required-variables" doc:id="initialize-job-context-sets-required-variables">
+        <munit:execution>
+            <flow-ref name="initialize-job-context-sub-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.jobId]" is="#[MunitTools::notNullValue()]"/>
+            <munit-tools:assert-that expression="#[vars.sourcePath]" is="#[MunitTools::notNullValue()]"/>
+            <munit-tools:assert-that expression="#[vars.fileName]" is="#[MunitTools::equalTo('inventory.csv')]"/>
+            <munit-tools:assert-that expression="#[vars.dryRun]" is="#[MunitTools::equalTo(false)]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="initialize-job-context-honors-filename-override" doc:id="initialize-job-context-honors-filename-override">
+        <munit:execution>
+            <munit:set-event>
+                <munit:variables>
+                    <munit:variable key="fileName" value="inventory-delta.csv"/>
+                    <munit:variable key="dryRun" value="#[true]"/>
+                </munit:variables>
+            </munit:set-event>
+            <flow-ref name="initialize-job-context-sub-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.fileName]" is="#[MunitTools::equalTo('inventory-delta.csv')]"/>
+            <munit-tools:assert-that expression="#[vars.dryRun]" is="#[MunitTools::equalTo(true)]"/>
+            <munit-tools:assert-that expression="#[vars.sourcePath]" is="#[MunitTools::containsString('inventory-delta.csv')]"/>
+        </munit:validation>
+    </munit:test>
+</mule>

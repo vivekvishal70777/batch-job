@@ -1,26 +1,47 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
 
-<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core"
-	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
-	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
-	<sub-flow name="fetch-data-record" doc:id="9295eb42-6d7d-4cc9-accb-69cc01ed33be" >
-		<logger level="INFO" doc:name="Start" doc:id="d16d0639-7a74-4e4e-9cc9-a92364e5481c" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |Start']"/>
-		<db:select doc:name="Fetch Batch Data" config-ref="database-config">
-            <reconnect />
-			<db:sql><![CDATA[#[vars.query]
-]]></db:sql>
-            <db:input-parameters><![CDATA[#[vars.inputParameter default ""]]]></db:input-parameters>
-        </db:select>
-		<logger level="INFO" doc:name="End" doc:id="8b82b29b-e145-433b-8fef-61f7896df2e8" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |End']" />
-	</sub-flow>
-	<sub-flow name="data-aggregation-sub-flow" doc:id="281a49f0-11c7-4504-a5d0-990b0575c6d7" >
-		<logger level="INFO" doc:name="Start" doc:id="280c7941-c17f-44f9-a95b-06b5b3eea5d9" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |Start']" />
-		<db:bulk-insert doc:name="Insert Entity Records" config-ref="database-config">
-                            <reconnect />
-			<db:sql><![CDATA[#[vars.query]
-]]></db:sql>
-                        </db:bulk-insert>
-		<logger level="INFO" doc:name="End" doc:id="3e40f945-11b0-461a-8511-0f982884e3d1" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | ' ++ (flow.name default 'unknown') ++ ' |End']" />
-	</sub-flow>
+    <sub-flow name="execute-select-sub-flow">
+        <logger level="DEBUG" doc:name="Start select"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'execute-select-sub-flow', 'Start')]"/>
+        <until-successful maxRetries="${retry.max}" millisBetweenRetries="${retry.interval-ms}" doc:name="Retry select">
+            <db:select config-ref="database-config" doc:name="Select">
+                <db:sql>#[vars.query]</db:sql>
+                <db:input-parameters><![CDATA[#[vars.inputParameters default {}]]]></db:input-parameters>
+            </db:select>
+        </until-successful>
+        <logger level="DEBUG" doc:name="End select"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'execute-select-sub-flow', 'End')]"/>
+    </sub-flow>
+
+    <sub-flow name="execute-update-sub-flow">
+        <logger level="DEBUG" doc:name="Start update"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'execute-update-sub-flow', 'Start')]"/>
+        <until-successful maxRetries="${retry.max}" millisBetweenRetries="${retry.interval-ms}" doc:name="Retry update">
+            <db:update config-ref="database-config" doc:name="Update">
+                <db:sql>#[vars.query]</db:sql>
+                <db:input-parameters><![CDATA[#[vars.inputParameters default {}]]]></db:input-parameters>
+            </db:update>
+        </until-successful>
+        <logger level="DEBUG" doc:name="End update"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'execute-update-sub-flow', 'End')]"/>
+    </sub-flow>
+
+    <sub-flow name="bulk-write-sub-flow">
+        <logger level="INFO" doc:name="Start bulk write"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'bulk-write-sub-flow', 'Start')]"/>
+        <until-successful maxRetries="${retry.max}" millisBetweenRetries="${retry.interval-ms}" doc:name="Retry bulk insert">
+            <db:bulk-insert config-ref="database-config" doc:name="Bulk insert">
+                <db:sql>#[vars.query]</db:sql>
+            </db:bulk-insert>
+        </until-successful>
+        <logger level="INFO" doc:name="End bulk write"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'bulk-write-sub-flow', 'End')]"/>
+    </sub-flow>
 </mule>

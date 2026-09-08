@@ -1,83 +1,53 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
-      xmlns:ftp="http://www.mulesoft.org/schema/mule/ftp"
-      xmlns:email="http://www.mulesoft.org/schema/mule/email"
-      xmlns:db="http://www.mulesoft.org/schema/mule/db"
-      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
-      xmlns:file="http://www.mulesoft.org/schema/mule/file"
-      xmlns:http="http://www.mulesoft.org/schema/mule/http"
       xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-        http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
-        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
-        http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
-        http://www.mulesoft.org/schema/mule/email http://www.mulesoft.org/schema/mule/email/current/mule-email.xsd
-        http://www.mulesoft.org/schema/mule/ftp http://www.mulesoft.org/schema/mule/ftp/current/mule-ftp.xsd
-http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
-	<error-handler name="global-error-handler">
-	     <on-error-propagate type="CUSTOM:BATCH_FAILED"
-                            logException="true"
-                            doc:name="Batch Failure(on-error-propagate)" enableNotifications="true">
-            <set-variable variableName="errorMessage" value="#[(error.description default 'Unexpected batch error')]" />
-            <logger level="ERROR"
-                    doc:name="Log Generic Error"
-                    message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | Unhandled error in flow ' ++ (vars.flowName default 'unknown') ++ ' | type=' ++ (error.errorType.identifier default 'UNKNOWN') ++ ' | desc=' ++ (error.description default 'Unexpected internal error')]" />
-            <set-payload value="#[{&#10;headerLine: &quot;!!! Alert Batch Failed&quot;, 	   &#10;batch: vars.batchId,&#10;success: false,&#10;flowName: flow.name default 'unknown',&#10;errorCode: 'INTERNAL_ERROR',&#10;message: vars.errorMessage,&#10;timestamp: now() as String&#10;}]" />
-			<flow-ref doc:name="Call send-email-sub-flow" doc:id="84ba8874-0a0a-4889-b2ad-b6cccfb7093d" name="send-email-sub-flow" />
-        
-</on-error-propagate>
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
-        <on-error-propagate type="DB:*" logException="true" doc:name="Database Error Handler (on-error-propagate)">
-            <set-variable variableName="errorMessage" value="#[(error.description default 'Database operation failed')]" />
-            <logger level="ERROR" doc:name="Log DB Error" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | Database error in flow ' ++ (flow.name default 'unknown') ++ ' | type=' ++ (error.errorType.identifier default 'UNKNOWN') ++ ' | desc=' ++ (error.description default 'Database operation failed')]" />
-            <set-payload value="#[%dw 2.0&#10;output application/json&#10;---&#10; { &#10;headerLine: &quot;!!! Alert Database Error&quot;, 	  &#10;batch: vars.batchId,&#10;success: false,&#10;flowName: flow.name default 'unknown',&#10;errorCode: 'DATABASE_ERROR',&#10;message: vars.errorMessage,&#10;timestamp: now() as String&#10;}]" />
-			<flow-ref doc:name="Call send-email-sub-flow" doc:id="02360823-04db-4857-a10a-e2944befb252" name="send-email-sub-flow" />
-        
-</on-error-propagate>
-		<on-error-propagate type="FTP:*" logException="true" doc:name="SFTP Error Handler (on-error-propagate)">
-            <set-variable variableName="errorMessage" value="#[(error.description default 'SFTP operation failed')]" />
-            <logger level="ERROR" doc:name="Log SFTP Error" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | SFTP error in flow ' ++ (vars.flowName default 'unknown') ++ ' | type=' ++ (error.errorType.identifier default 'UNKNOWN') ++ ' | desc=' ++ (error.description default 'SFTP operation failed') ++ ' | path=' ++ ((vars.path default '') as String)]" />
-            <set-payload value="#[{&#10;headerLine: &quot;!!! Alert SFTP Error&quot;, 	   &#10;batch: vars.batchId,&#10;success: false,&#10;flowName: flow.name default 'unknown',&#10;errorCode: 'SFTP Error',&#10;message: vars.errorMessage,&#10;timestamp: now() as String&#10;}]" />
-			<flow-ref doc:name="Call send-email-sub-flow" doc:id="8b68ef94-710d-4aec-8c7c-7eaa0a3bb7f2" name="send-email-sub-flow" />
-        
-</on-error-propagate>
-		<on-error-continue type="EMAIL:*"
-                           logException="true"
-                           doc:name="Email Error Handler (on-error-continue)">
-            <set-variable variableName="errorMessage" value="#[(error.description default 'Email sending failed')]" />
-            <logger level="ERROR"
-                    doc:name="Log Email Error"
-                    message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;)  ++ ' | Email error in flow ' ++ (vars.flowName default 'unknown') ++ ' | type=' ++ (error.errorType.identifier default 'UNKNOWN') ++ ' | desc=' ++ (error.description default 'Email sending failed')]" />
-            <set-payload value="#[{&#10;headerLine: &quot;!!! Alert EMAIL Error&quot;,    &#10;batch: vars.batchId,&#10;success: false,&#10;flowName: flow.name default 'unknown',&#10;errorCode: 'DATABASE_ERROR',&#10;message: vars.errorMessage,&#10;timestamp: now() as String&#10;}]" />
-			<flow-ref doc:name="Call send-email-sub-flow" doc:id="21fda6ea-5ad8-426b-ba3e-a24d000f759b" name="send-email-sub-flow" />
-        
-</on-error-continue>
+    <error-handler name="global-error-handler">
+        <on-error-propagate type="APP:LOCK_NOT_ACQUIRED" logException="false" doc:name="Lock already held">
+            <logger level="WARN" doc:name="Log lock conflict"
+                    message="#[import * from dwl::common --- logLine(vars.jobId, vars.flowName default 'unknown', 'Lock not acquired')]"/>
+        </on-error-propagate>
 
-        <on-error-propagate type="ANY"
-                            logException="true"
-                            doc:name="Generic Error Handler (on-error-propagate)">
-            <set-variable variableName="errorMessage" value="#[(error.description default 'Unexpected internal error')]" />
-            <logger level="ERROR"
-                    doc:name="Log Generic Error"
-                    message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | Unhandled error in flow ' ++ (vars.flowName default 'unknown') ++ ' | type=' ++ (error.errorType.identifier default 'UNKNOWN') ++ ' | desc=' ++ (error.description default 'Unexpected internal error')]" />
-            <set-payload value="#[{&#10;headerLine: &quot;!!! Alert Internal Error&quot;, 	   &#10;batch: vars.batchId,&#10;success: false,&#10;flowName: flow.name default 'unknown',&#10;errorCode: 'INTERNAL_ERROR',&#10;message: vars.errorMessage,&#10;timestamp: now() as String&#10;}]" />
-			<flow-ref doc:name="Call send-email-sub-flow" doc:id="3d56575e-929f-41a0-9865-c0f69ec020f3" name="send-email-sub-flow" />
-        
-</on-error-propagate>
+        <on-error-continue type="EMAIL:*" logException="true" doc:name="Email failure">
+            <logger level="ERROR" doc:name="Log email error"
+                    message="#[import * from dwl::common --- logLine(vars.jobId, vars.flowName default 'unknown', 'Email error: ' ++ (error.description default 'Email sending failed'))]"/>
+        </on-error-continue>
 
-    
-</error-handler>
-	<!-- [STUDIO:"bulk-insertion-error"]<error-handler name="bulk-insertion-error" doc:id="e2eae1cf-78d2-4d18-95ee-bc8ec8bda502" >
-		<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="3f441c80-6652-417f-a4d7-fda5f6d5f9da" >
-			<set-variable value="#[(error.description default 'Database operation failed')&#93;" doc:name="Set Variable" doc:id="e96c1572-627f-45d4-90c3-691ded82e0fc" variableName="errorMessage" />
-			<logger level="ERROR" doc:name="Log DB Error" doc:id="3aac5473-bba0-4187-a7d1-b8425569cc04" message="#[now() &gt;&gt; &quot;Asia/Kolkata&quot; as String ++ ' | ' ++ (vars.batchId default&quot;&quot;) ++ ' | Database error in flow/Step ' ++ (flow.name default 'Batch Aggregation') ++ ' | type=' ++ (error.errorType.identifier default 'UNKNOWN') ++ ' | desc=' ++ (error.description default 'Bulk insert operation failed')&#93;" />
-			<set-payload value="#[%dw 2.0&#10;output application/json&#10;&#45;&#45;-&#10; { &#10;headerLine: &quot;!!! Alert Bulk Insertion Error&quot;, 	  &#10;batch: vars.batchId,&#10;success: false,&#10;flowName: flow.name default 'unknown',&#10;errorCode: 'BULK_INSERTION_ERROR',&#10;message: vars.errorMessage,&#10;timestamp: now() as String&#10;}&#93;" doc:name="Set Payload" doc:id="252c8ecb-ab98-4ca8-b586-7491f7421539" />
-			<flow-ref doc:name="Call send-email-sub-flow" doc:id="c0570db8-9a43-489a-bca9-65f007118f68" name="send-email-sub-flow" />
-		</on-error-continue>
-	</error-handler> [STUDIO] -->
+        <on-error-propagate type="DB:*" logException="true" doc:name="Database failure">
+            <set-variable variableName="errorMessage" value="#[error.description default 'Database operation failed']"/>
+            <set-variable variableName="errorCode" value="DATABASE_ERROR"/>
+            <logger level="ERROR" doc:name="Log DB error"
+                    message="#[import * from dwl::common --- logLine(vars.jobId, vars.flowName default 'unknown', 'Database error: ' ++ vars.errorMessage)]"/>
+            <flow-ref name="fail-job-and-notify-sub-flow"/>
+        </on-error-propagate>
 
+        <on-error-propagate type="SFTP:*" logException="true" doc:name="SFTP failure">
+            <set-variable variableName="errorMessage" value="#[error.description default 'SFTP operation failed']"/>
+            <set-variable variableName="errorCode" value="SFTP_ERROR"/>
+            <logger level="ERROR" doc:name="Log SFTP error"
+                    message="#[import * from dwl::common --- logLine(vars.jobId, vars.flowName default 'unknown', 'SFTP error: ' ++ vars.errorMessage ++ ' path=' ++ ((vars.sourcePath default '') as String))]"/>
+            <flow-ref name="fail-job-and-notify-sub-flow"/>
+        </on-error-propagate>
 
+        <on-error-propagate type="APP:NO_SOURCE, APP:RECONCILIATION_FAILED, APP:MIGRATION_FAILED" logException="true" doc:name="Migration business failure">
+            <set-variable variableName="errorMessage" value="#[error.description default 'Migration failed']"/>
+            <set-variable variableName="errorCode" value="#[error.errorType.identifier default 'MIGRATION_FAILED']"/>
+            <logger level="ERROR" doc:name="Log migration error"
+                    message="#[import * from dwl::common --- logLine(vars.jobId, vars.flowName default 'unknown', 'Migration error: ' ++ vars.errorMessage)]"/>
+            <flow-ref name="fail-job-and-notify-sub-flow"/>
+        </on-error-propagate>
+
+        <on-error-propagate type="ANY" logException="true" doc:name="Unhandled failure">
+            <set-variable variableName="errorMessage" value="#[error.description default 'Unexpected internal error']"/>
+            <set-variable variableName="errorCode" value="INTERNAL_ERROR"/>
+            <logger level="ERROR" doc:name="Log unhandled error"
+                    message="#[import * from dwl::common --- logLine(vars.jobId, vars.flowName default 'unknown', 'Unhandled error: ' ++ vars.errorMessage)]"/>
+            <flow-ref name="fail-job-and-notify-sub-flow"/>
+        </on-error-propagate>
+    </error-handler>
 </mule>

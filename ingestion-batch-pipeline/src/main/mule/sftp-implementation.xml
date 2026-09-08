@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:sftp="http://www.mulesoft.org/schema/mule/sftp"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd">
+
+    <sub-flow name="read-source-file-sub-flow">
+        <logger level="INFO" doc:name="Start SFTP read"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'read-source-file-sub-flow', 'Reading ' ++ vars.sourcePath)]"/>
+        <until-successful maxRetries="${retry.max}" millisBetweenRetries="${retry.interval-ms}" doc:name="Retry SFTP read">
+            <sftp:read config-ref="sftp-config"
+                       path="#[vars.sourcePath]"
+                       outputMimeType="application/csv; header=true; streaming=true"
+                       doc:name="Read source CSV"/>
+        </until-successful>
+        <logger level="INFO" doc:name="End SFTP read"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'read-source-file-sub-flow', 'End')]"/>
+    </sub-flow>
+
+    <sub-flow name="write-export-file-sub-flow">
+        <logger level="INFO" doc:name="Start SFTP write"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'write-export-file-sub-flow', 'Writing ' ++ vars.exportPath)]"/>
+        <until-successful maxRetries="${retry.max}" millisBetweenRetries="${retry.interval-ms}" doc:name="Retry SFTP write">
+            <sftp:write config-ref="sftp-config"
+                        path="#[vars.exportPath]"
+                        mode="OVERWRITE"
+                        createParentDirectories="true"
+                        doc:name="Write export file"/>
+        </until-successful>
+        <logger level="INFO" doc:name="End SFTP write"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'write-export-file-sub-flow', 'End')]"/>
+    </sub-flow>
+
+    <sub-flow name="archive-source-file-sub-flow">
+        <logger level="INFO" doc:name="Start archive"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'archive-source-file-sub-flow', 'Archiving ' ++ vars.sourcePath)]"/>
+        <until-successful maxRetries="${retry.max}" millisBetweenRetries="${retry.interval-ms}" doc:name="Retry SFTP move">
+            <sftp:move config-ref="sftp-config"
+                       path="#[vars.sourcePath]"
+                       targetPath="${sftp.archive-directory}"
+                       overwrite="true"
+                       createParentDirectories="true"
+                       renameTo="#[vars.archiveFileName]"
+                       doc:name="Archive source file"/>
+        </until-successful>
+        <logger level="INFO" doc:name="End archive"
+                message="#[import * from dwl::common --- logLine(vars.jobId, 'archive-source-file-sub-flow', 'End')]"/>
+    </sub-flow>
+</mule>

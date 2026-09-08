@@ -2,13 +2,19 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Batch Job</title>
+    <title>Inventory Migration</title>
 </head>
 <body>
     <h2>#[payload.headerLine]</h2>
-    <p><b>Batch:</b> #[payload.batch]</p>
+    <p><b>Job ID:</b> #[payload.jobId default payload.batch]</p>
+    <p><b>Status:</b> #[payload.status]</p>
     <p><b>File Path:</b> #[payload.filePath]</p>
     <p><b>Message:</b> #[payload.message]</p>
+    <p><b>Total records:</b> #[payload.totalRecords]</p>
+    <p><b>Valid records:</b> #[payload.successCount]</p>
+    <p><b>Failed records:</b> #[payload.failureCount]</p>
+    <p><b>Merged into target:</b> #[payload.mergedCount]</p>
+    <p><b>Dry run:</b> #[payload.dryRun]</p>
     <p><b>Timestamp:</b> #[payload.timestamp]</p>
 </body>
 </html>

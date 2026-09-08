@@ -1,0 +1,76 @@
+{
+  "info": {
+    "name": "Inventory Data Migration API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081/api/v1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Ready",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/ready"
+      }
+    },
+    {
+      "name": "Start migration",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fileName\": \"inventory.csv\",\n  \"dryRun\": false\n}"
+        },
+        "url": "{{baseUrl}}/migration/jobs"
+      }
+    },
+    {
+      "name": "Start dry run",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fileName\": \"inventory.csv\",\n  \"dryRun\": true\n}"
+        },
+        "url": "{{baseUrl}}/migration/jobs"
+      }
+    },
+    {
+      "name": "List jobs",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/migration/jobs"
+      }
+    },
+    {
+      "name": "Get job",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/migration/jobs/{{jobId}}"
+      }
+    }
+  ]
+}

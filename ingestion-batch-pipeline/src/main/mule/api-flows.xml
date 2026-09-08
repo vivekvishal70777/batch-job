@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:db="http://www.mulesoft.org/schema/mule/db"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <flow name="health-check-flow">
+        <http:listener config-ref="http-listener-config" path="/health" allowedMethods="GET" doc:name="GET /health">
+            <http:response statusCode="200">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:response>
+        </http:listener>
+        <ee:transform doc:name="Liveness payload">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::apiResponses
+output application/json
+---
+healthResponse("UP", { liveness: "UP" })]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="readiness-check-flow">
+        <http:listener config-ref="http-listener-config" path="/ready" allowedMethods="GET" doc:name="GET /ready">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 503]">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+        <try doc:name="Ping database">
+            <db:select config-ref="database-config" doc:name="Readiness ping">
+                <db:sql>${query.health-check}</db:sql>
+            </db:select>
+            <set-variable variableName="httpStatus" value="200"/>
+            <ee:transform doc:name="Ready payload">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::apiResponses
+output application/json
+---
+healthResponse("UP", { liveness: "UP", database: "UP" })]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            <error-handler>
+                <on-error-continue type="ANY" doc:name="Database down">
+                    <set-variable variableName="httpStatus" value="503"/>
+                    <ee:transform doc:name="Not ready payload">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::apiResponses
+output application/json
+---
+healthResponse("DOWN", { liveness: "UP", database: "DOWN", detail: error.description default "Database ping failed" })]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </flow>
+
+    <flow name="migration-http-trigger-flow">
+        <http:listener config-ref="http-listener-config" path="/migration/jobs" allowedMethods="POST" doc:name="POST /migration/jobs">
+            <http:response statusCode="#[vars.httpStatus default 202]">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json", "X-Correlation-Id": vars.jobId default correlationId }]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+        <ee:transform doc:name="Read trigger options">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="fileName"><![CDATA[%dw 2.0
+output application/java
+var body = payload default {}
+---
+(body.fileName default attributes.queryParams.fileName default p('sftp.input-filename')) as String]]></ee:set-variable>
+                <ee:set-variable variableName="dryRun"><![CDATA[%dw 2.0
+output application/java
+var body = payload default {}
+---
+(body.dryRun default (attributes.queryParams.dryRun == "true") default (p('migration.dry-run-default') == "true")) as Boolean]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <try doc:name="Accept and run asynchronously">
+            <flow-ref name="prepare-migration-sub-flow"/>
+            <async doc:name="Run migration">
+                <flow-ref name="migration-orchestrator-flow"/>
+            </async>
+            <set-variable variableName="httpStatus" value="202"/>
+            <ee:transform doc:name="Accepted response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::apiResponses
+output application/json
+---
+acceptedResponse(vars.jobId, vars.fileName, vars.dryRun)]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            <error-handler>
+                <on-error-continue type="APP:LOCK_NOT_ACQUIRED" doc:name="Conflict">
+                    <set-variable variableName="httpStatus" value="409"/>
+                    <ee:transform doc:name="Lock conflict response">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    status: "CONFLICT",
+    errorCode: "LOCK_NOT_ACQUIRED",
+    message: "A migration job is already running. Retry after the current job completes.",
+    timestamp: now() as String
+}]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </flow>
+
+    <flow name="get-migration-job-flow">
+        <http:listener config-ref="http-listener-config" path="/migration/jobs/{jobId}" allowedMethods="GET" doc:name="GET /migration/jobs/{jobId}">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+        <set-variable variableName="jobId" value="#[attributes.uriParams.jobId]"/>
+        <ee:transform doc:name="Prepare fetch-job">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
+---
+p('query.fetch-job')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{ jobId: vars.jobId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-select-sub-flow"/>
+        <choice doc:name="Job found?">
+            <when expression="#[isEmpty(payload)]">
+                <set-variable variableName="httpStatus" value="404"/>
+                <ee:transform doc:name="Not found">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    status: "NOT_FOUND",
+    errorCode: "JOB_NOT_FOUND",
+    message: "No migration job found for id " ++ vars.jobId,
+    timestamp: now() as String
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <set-variable variableName="httpStatus" value="200"/>
+                <ee:transform doc:name="Job payload">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::apiResponses
+output application/json
+---
+jobApiRecord(payload[0])]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="list-migration-jobs-flow">
+        <http:listener config-ref="http-listener-config" path="/migration/jobs" allowedMethods="GET" doc:name="GET /migration/jobs">
+            <http:response statusCode="200">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:response>
+        </http:listener>
+        <ee:transform doc:name="Prepare recent jobs query">
+            <ee:message/>
+            <ee:variables>
+                <ee:set-variable variableName="query"><![CDATA[%dw 2.0
+output application/java
+---
+p('query.fetch-recent-jobs')]]></ee:set-variable>
+                <ee:set-variable variableName="inputParameters"><![CDATA[%dw 2.0
+output application/java
+---
+{}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="execute-select-sub-flow"/>
+        <ee:transform doc:name="Jobs collection">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+import * from dwl::apiResponses
+output application/json
+---
+{
+    count: sizeOf(payload),
+    jobs: payload map (row) -> jobApiRecord(row)
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+</mule>

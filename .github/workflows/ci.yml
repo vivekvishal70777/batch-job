@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, main, 'cursor/**']
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ingestion-batch-pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate project
+        run: bash scripts/validate-project.sh

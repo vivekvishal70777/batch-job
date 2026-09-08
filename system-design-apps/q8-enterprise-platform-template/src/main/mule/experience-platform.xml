@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+  <!-- Platform template: client-id at the edge (API Manager stand-in), standard error, correlation. -->
+  <flow name="exp-platform-demo">
+    <http:listener config-ref="http-listener-config" path="/api/v1/demo" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+    </http:listener>
+    <choice>
+      <when expression="#[(attributes.headers['client_id'] default attributes.headers['client-id']) == null]">
+        <set-variable variableName="httpStatus" value="401"/>
+        <set-payload value='#[output application/json --- {
+          correlationId: correlationId,
+          errorCode: "UNAUTHORIZED",
+          message: "client_id required (API Manager client-id enforcement)"
+        }]'/>
+      </when>
+      <otherwise>
+        <set-payload value="#[output application/json --- {
+          correlationId: correlationId,
+          layer: 'experience',
+          message: 'Use Exchange catalog, OAuth or client-id, spike arrest, and this error shape on every API',
+          catalog: ['experience-apis', 'process-apis', 'system-apis']
+        }]"/>
+      </otherwise>
+    </choice>
+  </flow>
+
+  <flow name="exp-exchange-catalog">
+    <http:listener config-ref="http-listener-config" path="/api/v1/catalog" allowedMethods="GET"/>
+    <set-payload value='#[output application/json --- {
+      assets: [
+        { name: "q1-inventory-ingestion", layer: "process", domain: "inventory" },
+        { name: "q2-customer-360", layer: "experience", domain: "customer" },
+        { name: "q3-order-saga", layer: "process", domain: "order" },
+        { name: "q4-partner-b2b", layer: "experience", domain: "b2b" },
+        { name: "q5-notification-hub", layer: "process", domain: "notify" },
+        { name: "q6-hybrid-sap-extract", layer: "system", domain: "sap" },
+        { name: "q7-fault-tolerant-patterns", layer: "platform", domain: "resilience" }
+      ],
+      policy: ["client-id-enforcement", "rate-limiting", "json-threat-protection"],
+      cicd: "MUnit -> deploy dev -> promote API Manager -> prod"
+    }]'/>
+  </flow>
+</mule>

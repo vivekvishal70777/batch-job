@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <flow name="prc-work-worker">
+    <vm:listener queueName="work" config-ref="VM_Config"/>
+    <set-variable variableName="item" value="#[payload]"/>
+    <until-successful maxRetries="3" millisBetweenRetries="200">
+      <http:request method="POST" config-ref="http-request-config" path="/sys/dependency" responseTimeout="1000">
+        <http:body><![CDATA[#[output application/json --- vars.item]]]></http:body>
+      </http:request>
+    </until-successful>
+    <error-handler>
+      <on-error-continue type="HTTP:TIMEOUT,HTTP:CONNECTIVITY,HTTP:INTERNAL_SERVER_ERROR,MULE:RETRY_EXHAUSTED,MULE:ANY">
+        <choice>
+          <when expression="#[(error.errorType.identifier default '') contains 'BAD_REQUEST' or (error.errorType.identifier default '') == 'BAD_REQUEST']">
+            <logger level="ERROR" message="No retry on 4xx poison"/>
+            <vm:publish queueName="dlq" config-ref="VM_Config">
+              <vm:content><![CDATA[#[vars.item ++ { reason: 'POISON_4XX' }]]]></vm:content>
+            </vm:publish>
+          </when>
+          <when expression="#[(vars.item.attempts default 0) &gt;= 3]">
+            <vm:publish queueName="dlq" config-ref="VM_Config">
+              <vm:content><![CDATA[#[vars.item ++ { reason: 'RETRY_EXHAUSTED' }]]]></vm:content>
+            </vm:publish>
+            <os:store key="circuit" objectStore="cache-store">
+              <os:value><![CDATA[#[output application/java --- { open: true, failures: 4, openedAt: now() as String }]]]></os:value>
+            </os:store>
+          </when>
+          <otherwise>
+            <vm:publish queueName="work" config-ref="VM_Config">
+              <vm:content><![CDATA[#[vars.item ++ { attempts: (vars.item.attempts default 0) + 1 }]]]></vm:content>
+            </vm:publish>
+          </otherwise>
+        </choice>
+      </on-error-continue>
+    </error-handler>
+  </flow>
+
+  <flow name="exp-get-dlq">
+    <http:listener config-ref="http-listener-config" path="/api/v1/dlq/peek" allowedMethods="GET"/>
+    <set-payload value='#[output application/json --- { message: "Consume queue dlq via Anypoint MQ / VM in ops tools; poison parked not blocking the main queue" }]'/>
+  </flow>
+
+  <flow name="exp-close-circuit">
+    <http:listener config-ref="http-listener-config" path="/api/v1/circuit/close" allowedMethods="POST"/>
+    <os:store key="circuit" objectStore="cache-store">
+      <os:value><![CDATA[#[output application/java --- { open: false, failures: 0 }]]]></os:value>
+    </os:store>
+    <set-payload value='#[output application/json --- { open: false }]'/>
+  </flow>
+</mule>

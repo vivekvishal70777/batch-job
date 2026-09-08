@@ -1,0 +1,10 @@
+http:
+  listener:
+    host: "0.0.0.0"
+    port: 8087
+
+api:
+  basePath: "/api/v1"
+
+app:
+  name: "q7-fault-tolerant-patterns"

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <!-- Experience: kickoff returns 202. Never process 20M rows on the listener thread. -->
+  <flow name="exp-post-ingestion-jobs">
+    <http:listener config-ref="http-listener-config" path="/api/v1/ingestion/jobs" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 202]"/>
+    </http:listener>
+    <set-variable variableName="path" value="#[payload.path default 'classpath://inbox/inventory-sample.csv']"/>
+    <set-variable variableName="source" value="#[payload.source default 'NIGHTLY']"/>
+    <set-variable variableName="force" value="#[payload.force default false]"/>
+    <set-variable variableName="checksum" value="#[vars.path ++ '|' ++ vars.source]"/>
+    <try>
+      <os:retrieve key="#[vars.checksum]" objectStore="jobs-store" target="existingJob"/>
+      <choice>
+        <when expression="#[vars.force]">
+          <flow-ref name="create-and-enqueue-job"/>
+        </when>
+        <otherwise>
+          <set-variable variableName="httpStatus" value="200"/>
+          <set-payload value="#[output application/json --- vars.existingJob]"/>
+        </otherwise>
+      </choice>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <flow-ref name="create-and-enqueue-job"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+
+  <sub-flow name="create-and-enqueue-job">
+    <set-variable variableName="jobId" value="#[uuid()]"/>
+    <set-variable variableName="job" value="#[output application/java --- {
+      jobId: vars.jobId,
+      path: vars.path,
+      source: vars.source,
+      checksum: vars.checksum,
+      status: 'ACCEPTED',
+      claimedBy: null,
+      loaded: 0,
+      rejected: 0,
+      startedAt: now() as String,
+      finishedAt: null
+    }]"/>
+    <os:store key="#[vars.jobId]" objectStore="jobs-store">
+      <os:value><![CDATA[#[vars.job]]]></os:value>
+    </os:store>
+    <os:store key="#[vars.checksum]" objectStore="jobs-store">
+      <os:value><![CDATA[#[vars.job]]]></os:value>
+    </os:store>
+    <vm:publish queueName="ingest-jobs" config-ref="VM_Config">
+      <vm:content><![CDATA[#[vars.job]]]></vm:content>
+    </vm:publish>
+    <set-variable variableName="httpStatus" value="202"/>
+    <set-payload value="#[output application/json --- {
+      jobId: vars.jobId,
+      status: 'ACCEPTED',
+      links: { self: '/api/v1/ingestion/jobs/' ++ vars.jobId }
+    }]"/>
+  </sub-flow>
+
+  <flow name="exp-get-ingestion-job">
+    <http:listener config-ref="http-listener-config" path="/api/v1/ingestion/jobs/{jobId}" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+    </http:listener>
+    <os:retrieve key="#[attributes.uriParams.jobId]" objectStore="jobs-store"/>
+    <set-payload value="#[output application/json --- payload]"/>
+  </flow>
+
+  <flow name="exp-post-pos-deltas">
+    <http:listener config-ref="http-listener-config" path="/api/v1/pos/deltas" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 202]"/>
+    </http:listener>
+    <set-variable variableName="idempotencyKey" value="#[attributes.headers['idempotency-key'] default uuid()]"/>
+    <try>
+      <os:retrieve key="#[vars.idempotencyKey]" objectStore="idempotency-store"/>
+      <set-variable variableName="httpStatus" value="200"/>
+      <set-payload value="#[output application/json --- payload]"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-variable variableName="delta" value="#[output application/java --- {
+            sku: payload.sku,
+            storeId: payload.storeId,
+            qty: payload.qty,
+            eventTs: payload.eventTs default now() as String,
+            source: 'POS',
+            idempotencyKey: vars.idempotencyKey
+          }]"/>
+          <os:store key="#[vars.idempotencyKey]" objectStore="idempotency-store">
+            <os:value><![CDATA[#[output application/java --- { accepted: true, idempotencyKey: vars.idempotencyKey }]]]></os:value>
+          </os:store>
+          <vm:publish queueName="pos-deltas" config-ref="VM_Config">
+            <vm:content><![CDATA[#[vars.delta]]]></vm:content>
+          </vm:publish>
+          <set-variable variableName="httpStatus" value="202"/>
+          <set-payload value='#[output application/json --- { accepted: true, idempotencyKey: vars.idempotencyKey }]'/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+
+  <flow name="exp-get-inventory">
+    <http:listener config-ref="http-listener-config" path="/api/v1/inventory/{sku}" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+    </http:listener>
+    <set-variable variableName="invKey" value="#[attributes.uriParams.sku ++ '|' ++ (attributes.queryParams.storeId default '')]"/>
+    <os:retrieve key="#[vars.invKey]" objectStore="inventory-store"/>
+    <set-payload value="#[output application/json --- payload]"/>
+  </flow>
+</mule>

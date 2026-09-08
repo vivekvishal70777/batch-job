@@ -1,0 +1,10 @@
+http:
+  listener:
+    host: "0.0.0.0"
+    port: 8081
+
+api:
+  basePath: "/api/v1"
+
+app:
+  name: "q1-inventory-ingestion"

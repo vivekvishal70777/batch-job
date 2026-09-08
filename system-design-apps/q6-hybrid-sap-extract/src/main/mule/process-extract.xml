@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <flow name="prc-sap-page-worker">
+    <vm:listener queueName="sap-pages" config-ref="VM_Config" numberOfConsumers="1"/>
+    <set-variable variableName="afterDoc" value="#[payload.afterDoc]"/>
+    <set-variable variableName="runId" value="#[payload.runId]"/>
+    <http:request method="GET" config-ref="http-request-config"
+                  path="/sys/sap/documents"
+                  responseTimeout="10000">
+      <http:query-params><![CDATA[#[output application/java --- { after: vars.afterDoc as String, limit: '50' }]]]></http:query-params>
+    </http:request>
+    <set-variable variableName="page" value="#[payload]"/>
+    <foreach collection="#[vars.page.records default []]">
+      <os:store key="#['doc-' ++ payload.docNumber as String]" objectStore="jobs-store">
+        <os:value><![CDATA[#[payload]]]></os:value>
+      </os:store>
+      <set-variable variableName="afterDoc" value="#[payload.docNumber]"/>
+    </foreach>
+    <!-- Checkpoint after each page so a VPN drop resumes, not restarts from zero. -->
+    <os:store key="sap-last-doc" objectStore="watermark-store">
+      <os:value><![CDATA[#[vars.afterDoc]]]></os:value>
+    </os:store>
+    <choice>
+      <when expression="#[vars.page.hasMore default false]">
+        <vm:publish queueName="sap-pages" config-ref="VM_Config">
+          <vm:content><![CDATA[#[output application/java --- { runId: vars.runId, afterDoc: vars.afterDoc, page: (payload.page default 1) + 1 }]]]></vm:content>
+        </vm:publish>
+      </when>
+      <otherwise>
+        <logger level="INFO" message="#['SAP extract complete run=' ++ vars.runId ++ ' watermark=' ++ vars.afterDoc]"/>
+      </otherwise>
+    </choice>
+  </flow>
+</mule>

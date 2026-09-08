@@ -14,6 +14,8 @@ Each problem is answered in interview order:
 
 Draw while you talk. Name alternatives and why you rejected them.
 
+**Runnable Mule 4 apps** for each question live in [`system-design-apps/`](system-design-apps/README.md) (Q1–Q8). Downstream systems are HTTP mocks; Object Store and VM queues stand in for SQL and Anypoint MQ.
+
 ---
 
 ## Interview method (use this on every question)

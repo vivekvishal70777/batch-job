@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <!-- Nightly extract: bookmark = last document number, not wall clock. -->
+  <flow name="exp-run-extract">
+    <http:listener config-ref="http-listener-config" path="/api/v1/extracts/run" allowedMethods="POST">
+      <http:response statusCode="202"/>
+    </http:listener>
+    <try>
+      <os:retrieve key="sap-last-doc" objectStore="watermark-store" target="lastDoc"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-variable variableName="lastDoc" value="#[0]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+    <set-variable variableName="runId" value="#[uuid()]"/>
+    <vm:publish queueName="sap-pages" config-ref="VM_Config">
+      <vm:content><![CDATA[#[output application/java --- { runId: vars.runId, afterDoc: vars.lastDoc as Number, page: 1 }]]]></vm:content>
+    </vm:publish>
+    <set-payload value="#[output application/json --- { runId: vars.runId, afterDoc: vars.lastDoc, status: 'ACCEPTED' }]"/>
+  </flow>
+
+  <flow name="exp-get-watermark">
+    <http:listener config-ref="http-listener-config" path="/api/v1/extracts/watermark" allowedMethods="GET"/>
+    <try>
+      <os:retrieve key="sap-last-doc" objectStore="watermark-store"/>
+      <set-payload value="#[output application/json --- { lastDocumentNumber: payload }]"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-payload value='#[output application/json --- { lastDocumentNumber: 0 }]'/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+</mule>

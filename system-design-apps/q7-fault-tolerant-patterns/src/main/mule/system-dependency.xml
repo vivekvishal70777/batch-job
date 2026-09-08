@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+  <flow name="sys-dependency">
+    <http:listener config-ref="http-listener-config" path="/sys/dependency" allowedMethods="POST">
+      <http:response statusCode="#[if ((payload.fail default false) == true) 500 else 200]"/>
+    </http:listener>
+    <choice>
+      <when expression="#[payload.fail default false]">
+        <set-payload value='#[output application/json --- { ok: false }]'/>
+      </when>
+      <otherwise>
+        <set-payload value='#[output application/json --- { ok: true, workId: payload.workId }]'/>
+      </otherwise>
+    </choice>
+  </flow>
+</mule>

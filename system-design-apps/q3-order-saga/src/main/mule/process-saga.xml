@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <flow name="prc-saga-worker">
+    <vm:listener queueName="order-saga" config-ref="VM_Config" numberOfConsumers="1"/>
+    <set-variable variableName="order" value="#[payload]"/>
+    <set-variable variableName="orderId" value="#[payload.orderId]"/>
+    <try>
+      <!-- Ledger first: skip WMS if reservation already exists (WMS is not idempotent). -->
+      <try>
+        <os:retrieve key="#['res-' ++ vars.orderId]" objectStore="idempotency-store" target="reservation"/>
+        <logger level="INFO" message="Skip WMS reserve; ledger hit"/>
+        <error-handler>
+          <on-error-continue type="OS:KEY_NOT_FOUND">
+            <http:request method="POST" config-ref="http-request-config" path="/sys/wms/reserve">
+              <http:body><![CDATA[#[output application/json --- { orderId: vars.orderId, lines: vars.order.lines }]]]></http:body>
+            </http:request>
+            <os:store key="#['res-' ++ vars.orderId]" objectStore="idempotency-store">
+              <os:value><![CDATA[#[payload]]]></os:value>
+            </os:store>
+            <set-variable variableName="order" value="#[vars.order ++ { wmsReservationId: payload.reservationId }]"/>
+          </on-error-continue>
+        </error-handler>
+      </try>
+      <http:request method="POST" config-ref="http-request-config" path="/sys/psp/authorize">
+        <http:body><![CDATA[#[output application/json --- { orderId: vars.orderId, amount: vars.order.amount, paymentToken: vars.order.paymentToken }]]]></http:body>
+      </http:request>
+      <set-variable variableName="order" value="#[vars.order ++ { pspAuthId: payload.authId }]"/>
+      <try>
+        <http:request method="POST" config-ref="http-request-config" path="/sys/salesforce/orders">
+          <http:body><![CDATA[#[output application/json --- { orderId: vars.orderId, amount: vars.order.amount }]]]></http:body>
+        </http:request>
+        <set-variable variableName="order" value="#[vars.order ++ { sfOrderId: payload.sfOrderId }]"/>
+        <error-handler>
+          <on-error-continue type="HTTP:TIMEOUT,HTTP:CONNECTIVITY,HTTP:INTERNAL_SERVER_ERROR">
+            <os:store key="#['outbox-sf-' ++ vars.orderId]" objectStore="outbox-store">
+              <os:value><![CDATA[#[vars.order]]]></os:value>
+            </os:store>
+            <logger level="WARN" message="Salesforce down; outbox stored"/>
+          </on-error-continue>
+        </error-handler>
+      </try>
+      <http:request method="POST" config-ref="http-request-config" path="/sys/wms/notify">
+        <http:body><![CDATA[#[output application/json --- { orderId: vars.orderId }]]]></http:body>
+      </http:request>
+      <set-variable variableName="order" value="#[vars.order ++ { status: 'COMPLETED' }]"/>
+      <os:store key="#[vars.orderId]" objectStore="jobs-store">
+        <os:value><![CDATA[#[vars.order]]]></os:value>
+      </os:store>
+      <error-handler>
+        <on-error-continue type="MULE:ANY">
+          <flow-ref name="compensate-order"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+
+  <sub-flow name="compensate-order">
+    <logger level="ERROR" message="#['Compensating order ' ++ vars.orderId ++ ' ' ++ (error.description default '')]"/>
+    <try>
+      <http:request method="POST" config-ref="http-request-config" path="/sys/psp/void">
+        <http:body><![CDATA[#[output application/json --- { authId: vars.order.pspAuthId }]]]></http:body>
+      </http:request>
+      <error-handler>
+        <on-error-continue type="MULE:ANY"/>
+      </error-handler>
+    </try>
+    <try>
+      <http:request method="POST" config-ref="http-request-config" path="/sys/wms/release">
+        <http:body><![CDATA[#[output application/json --- { orderId: vars.orderId, reservationId: vars.order.wmsReservationId }]]]></http:body>
+      </http:request>
+      <error-handler>
+        <on-error-continue type="MULE:ANY"/>
+      </error-handler>
+    </try>
+    <set-variable variableName="order" value="#[vars.order ++ { status: 'COMPENSATED' }]"/>
+    <os:store key="#[vars.orderId]" objectStore="jobs-store">
+      <os:value><![CDATA[#[vars.order]]]></os:value>
+    </os:store>
+  </sub-flow>
+</mule>

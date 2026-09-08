@@ -1,0 +1,10 @@
+http:
+  listener:
+    host: "0.0.0.0"
+    port: 8086
+
+api:
+  basePath: "/api/v1"
+
+app:
+  name: "q6-hybrid-sap-extract"

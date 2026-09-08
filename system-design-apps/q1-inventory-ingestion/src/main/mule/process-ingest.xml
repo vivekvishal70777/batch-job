@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <!-- Process: claim job, stream/map CSV, LWW upsert, outbox to analytics, digest email. -->
+  <flow name="prc-ingest-job-worker">
+    <vm:listener queueName="ingest-jobs" config-ref="VM_Config" numberOfConsumers="1"/>
+    <set-variable variableName="job" value="#[payload]"/>
+    <set-variable variableName="jobId" value="#[payload.jobId]"/>
+    <choice>
+      <when expression="#[vars.job.claimedBy != null and vars.job.status == 'RUNNING']">
+        <logger level="WARN" message="#['Skip already claimed job ' ++ vars.jobId]"/>
+      </when>
+      <otherwise>
+        <set-variable variableName="job" value="#[output application/java --- vars.job ++ { claimedBy: 'worker-1', status: 'RUNNING' }]"/>
+        <os:store key="#[vars.jobId]" objectStore="jobs-store">
+          <os:value><![CDATA[#[vars.job]]]></os:value>
+        </os:store>
+        <set-variable variableName="rows" value="#[output application/java ---
+          readUrl(vars.job.path, 'application/csv')
+        ]"/>
+        <set-variable variableName="loaded" value="#[0]"/>
+        <set-variable variableName="rejected" value="#[0]"/>
+        <foreach collection="#[vars.rows]">
+          <flow-ref name="upsert-inventory-row"/>
+        </foreach>
+        <set-variable variableName="job" value="#[output application/java --- vars.job ++ {
+          status: 'SUCCEEDED',
+          loaded: vars.loaded,
+          rejected: vars.rejected,
+          finishedAt: now() as String
+        }]"/>
+        <os:store key="#[vars.jobId]" objectStore="jobs-store">
+          <os:value><![CDATA[#[vars.job]]]></os:value>
+        </os:store>
+        <flow-ref name="sys-email-digest"/>
+      </otherwise>
+    </choice>
+  </flow>
+
+  <flow name="prc-pos-delta-worker">
+    <vm:listener queueName="pos-deltas" config-ref="VM_Config"/>
+    <set-variable variableName="row" value="#[output application/java --- {
+      SKU: payload.sku,
+      StoreId: payload.storeId,
+      Quantity: payload.qty,
+      Timestamp: payload.eventTs,
+      source: 'POS'
+    }]"/>
+    <set-variable variableName="jobId" value="#['pos-' ++ (payload.idempotencyKey default uuid())]"/>
+    <flow-ref name="upsert-inventory-row"/>
+  </flow>
+
+  <sub-flow name="upsert-inventory-row">
+    <set-variable variableName="row" value="#[payload.SKU default vars.row.SKU default null]"/>
+    <choice>
+      <when expression="#[payload.SKU != null]">
+        <set-variable variableName="candidate" value="#[payload]"/>
+      </when>
+      <otherwise>
+        <set-variable variableName="candidate" value="#[vars.row]"/>
+      </otherwise>
+    </choice>
+    <choice>
+      <when expression="#[
+        (vars.candidate.SKU default vars.candidate.sku) == null
+        or (vars.candidate.StoreId default vars.candidate.storeId) == null
+        or ((vars.candidate.Quantity default vars.candidate.qty) as String as Number default null) == null
+      ]">
+        <set-variable variableName="rejected" value="#[(vars.rejected default 0) + 1]"/>
+        <os:store key="#[(vars.jobId default 'pos') ++ '|' ++ uuid()]" objectStore="reject-store">
+          <os:value><![CDATA[#[output application/java --- {
+            jobId: vars.jobId,
+            payload: vars.candidate,
+            errorCode: 'VALIDATION',
+            errorMsg: 'sku, storeId and numeric qty are required'
+          }]]]></os:value>
+        </os:store>
+      </when>
+      <otherwise>
+        <set-variable variableName="invKey" value="#[(vars.candidate.SKU default vars.candidate.sku) ++ '|' ++ (vars.candidate.StoreId default vars.candidate.storeId)]"/>
+        <set-variable variableName="incomingTs" value="#[(vars.candidate.Timestamp default vars.candidate.eventTs default now()) as String]"/>
+        <set-variable variableName="incoming" value="#[output application/java --- {
+          sku: vars.candidate.SKU default vars.candidate.sku,
+          storeId: vars.candidate.StoreId default vars.candidate.storeId,
+          qty: (vars.candidate.Quantity default vars.candidate.qty) as Number,
+          eventTs: vars.incomingTs,
+          source: vars.candidate.source default vars.job.source default 'NIGHTLY',
+          jobId: vars.jobId
+        }]"/>
+        <try>
+          <os:retrieve key="#[vars.invKey]" objectStore="inventory-store" target="existingInv"/>
+          <choice>
+            <when expression="#[vars.incomingTs >= (vars.existingInv.eventTs default '')]">
+              <os:store key="#[vars.invKey]" objectStore="inventory-store">
+                <os:value><![CDATA[#[vars.incoming]]]></os:value>
+              </os:store>
+            </when>
+            <otherwise>
+              <logger level="INFO" message="#['LWW skip older event ' ++ vars.invKey]"/>
+            </otherwise>
+          </choice>
+          <error-handler>
+            <on-error-continue type="OS:KEY_NOT_FOUND">
+              <os:store key="#[vars.invKey]" objectStore="inventory-store">
+                <os:value><![CDATA[#[vars.incoming]]]></os:value>
+              </os:store>
+            </on-error-continue>
+          </error-handler>
+        </try>
+        <set-variable variableName="loaded" value="#[(vars.loaded default 0) + 1]"/>
+        <vm:publish queueName="analytics-outbox" config-ref="VM_Config">
+          <vm:content><![CDATA[#[vars.incoming]]]></vm:content>
+        </vm:publish>
+      </otherwise>
+    </choice>
+  </sub-flow>
+</mule>

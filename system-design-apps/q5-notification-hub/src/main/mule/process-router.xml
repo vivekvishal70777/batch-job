@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd">
+
+  <flow name="prc-route-notification">
+    <vm:listener queueName="notifications" config-ref="VM_Config"/>
+    <set-variable variableName="channel" value="#[payload.channel default 'email']"/>
+    <try>
+      <choice>
+        <when expression="#[vars.channel == 'sms']">
+          <http:request method="POST" config-ref="http-request-config" path="/sys/sms">
+            <http:body><![CDATA[#[output application/json --- payload]]]></http:body>
+          </http:request>
+        </when>
+        <when expression="#[vars.channel == 'teams' or vars.channel == 'slack']">
+          <http:request method="POST" config-ref="http-request-config" path="/sys/chat">
+            <http:body><![CDATA[#[output application/json --- payload]]]></http:body>
+          </http:request>
+        </when>
+        <otherwise>
+          <http:request method="POST" config-ref="http-request-config" path="/sys/email">
+            <http:body><![CDATA[#[output application/json --- payload]]]></http:body>
+          </http:request>
+        </otherwise>
+      </choice>
+      <error-handler>
+        <on-error-continue type="MULE:ANY">
+          <logger level="ERROR" message="#['Notify failed channel=' ++ vars.channel ++ ' id=' ++ (payload.notificationId default '') ++ '; business transaction already committed']"/>
+          <http:request method="POST" config-ref="http-request-config" path="/sys/pagerduty">
+            <http:body><![CDATA[#[output application/json --- { notificationId: payload.notificationId, error: error.description }]]]></http:body>
+          </http:request>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+</mule>

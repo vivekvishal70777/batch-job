@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+  <flow name="sys-email">
+    <http:listener config-ref="http-listener-config" path="/sys/email" allowedMethods="POST"/>
+    <logger level="INFO" message="#['EMAIL to=' ++ (payload.to default '') ++ ' template=' ++ (payload.templateId default '')]"/>
+    <set-payload value='#[output application/json --- { sent: true, channel: "email" }]'/>
+  </flow>
+  <flow name="sys-sms">
+    <http:listener config-ref="http-listener-config" path="/sys/sms" allowedMethods="POST"/>
+    <set-payload value='#[output application/json --- { sent: true, channel: "sms" }]'/>
+  </flow>
+  <flow name="sys-chat">
+    <http:listener config-ref="http-listener-config" path="/sys/chat" allowedMethods="POST"/>
+    <set-payload value='#[output application/json --- { sent: true, channel: payload.channel }]'/>
+  </flow>
+  <flow name="sys-pagerduty">
+    <http:listener config-ref="http-listener-config" path="/sys/pagerduty" allowedMethods="POST"/>
+    <logger level="WARN" message="Secondary PagerDuty alert"/>
+    <set-payload value='#[output application/json --- { paged: true }]'/>
+  </flow>
+</mule>

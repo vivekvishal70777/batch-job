@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <!-- Per-partner REST adapter. Isolation key = partnerId. -->
+  <flow name="exp-partner-rest-order">
+    <http:listener config-ref="http-listener-config" path="/api/v1/partners/{partnerId}/orders" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 202]"/>
+    </http:listener>
+    <set-variable variableName="partnerId" value="#[attributes.uriParams.partnerId]"/>
+    <set-variable variableName="poNumber" value="#[payload.poNumber]"/>
+    <set-variable variableName="idemKey" value="#[vars.partnerId ++ '|' ++ vars.poNumber]"/>
+    <try>
+      <os:retrieve key="#[vars.idemKey]" objectStore="idempotency-store"/>
+      <set-variable variableName="httpStatus" value="200"/>
+      <set-payload value="#[output application/json --- payload]"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-variable variableName="canonical" value="#[output application/java --- {
+            channel: 'REST',
+            partnerId: vars.partnerId,
+            poNumber: vars.poNumber,
+            lines: payload.lines default [],
+            receivedAt: now() as String
+          }]"/>
+          <vm:publish queueName="canonical-orders" config-ref="VM_Config">
+            <vm:content><![CDATA[#[vars.canonical]]]></vm:content>
+          </vm:publish>
+          <set-payload value="#[output application/json --- { orderId: vars.idemKey, status: 'ACCEPTED', partnerId: vars.partnerId }]"/>
+          <os:store key="#[vars.idemKey]" objectStore="idempotency-store">
+            <os:value><![CDATA[#[output application/java --- { orderId: vars.idemKey, status: 'ACCEPTED', partnerId: vars.partnerId }]]]></os:value>
+          </os:store>
+          <set-variable variableName="httpStatus" value="202"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+
+  <flow name="exp-partner-csv">
+    <http:listener config-ref="http-listener-config" path="/api/v1/partners/{partnerId}/files" allowedMethods="POST">
+      <http:response statusCode="202"/>
+    </http:listener>
+    <set-variable variableName="partnerId" value="#[attributes.uriParams.partnerId]"/>
+    <set-variable variableName="rows" value="#[output application/java ---
+      if (payload.^mimeType contains 'csv') payload
+      else read(payload, 'application/csv')
+    ]"/>
+    <foreach collection="#[vars.rows]">
+      <set-variable variableName="canonical" value="#[output application/java --- {
+        channel: 'SFTP_CSV',
+        partnerId: vars.partnerId,
+        poNumber: payload.poNumber default payload.PO,
+        lines: [{ sku: payload.sku default payload.SKU, qty: payload.qty default payload.Quantity }],
+        receivedAt: now() as String
+      }]"/>
+      <vm:publish queueName="canonical-orders" config-ref="VM_Config">
+        <vm:content><![CDATA[#[vars.canonical]]]></vm:content>
+      </vm:publish>
+    </foreach>
+    <set-payload value='#[output application/json --- { status: "ACCEPTED", channel: "CSV" }]'/>
+  </flow>
+
+  <flow name="exp-partner-edi">
+    <http:listener config-ref="http-listener-config" path="/api/v1/partners/{partnerId}/edi" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 202]"/>
+    </http:listener>
+    <set-variable variableName="raw" value="#[payload as String]"/>
+    <choice>
+      <when expression="#[!(vars.raw contains 'ST*850')]">
+        <os:store key="#['quarantine|' ++ attributes.uriParams.partnerId ++ '|' ++ uuid()]" objectStore="reject-store">
+          <os:value><![CDATA[#[output application/java --- {
+            partnerId: attributes.uriParams.partnerId,
+            reason: 'NOT_850',
+            hash: dw::Crypto::MD5(vars.raw as Binary),
+            storedAt: now() as String,
+            archiveHint: 'WORM object storage, not Object Store, for 7-year legal hold'
+          }]]]></os:value>
+        </os:store>
+        <set-variable variableName="httpStatus" value="422"/>
+        <set-payload value='#[output application/json --- { errorCode: "QUARANTINED", message: "EDI 850 not detected; raw archived" }]'/>
+      </when>
+      <otherwise>
+        <set-variable variableName="canonical" value="#[output application/java --- {
+          channel: 'EDI_850',
+          partnerId: attributes.uriParams.partnerId,
+          poNumber: (vars.raw splitBy '*')[3] default uuid(),
+          lines: [],
+          ediHash: dw::Crypto::MD5(vars.raw as Binary),
+          receivedAt: now() as String
+        }]"/>
+        <vm:publish queueName="canonical-orders" config-ref="VM_Config">
+          <vm:content><![CDATA[#[vars.canonical]]]></vm:content>
+        </vm:publish>
+        <set-payload value='#[output application/json --- { status: "ACCEPTED", channel: "EDI_850" }]'/>
+      </otherwise>
+    </choice>
+  </flow>
+</mule>

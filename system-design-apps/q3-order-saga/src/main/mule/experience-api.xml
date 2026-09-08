@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <flow name="exp-post-orders">
+    <http:listener config-ref="http-listener-config" path="/api/v1/orders" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 202]"/>
+    </http:listener>
+    <set-variable variableName="idempotencyKey" value="#[attributes.headers['idempotency-key']]"/>
+    <validation:is-true config-ref="validation-config" expression="#[vars.idempotencyKey != null]" message="Idempotency-Key header is required"/>
+    <try>
+      <os:retrieve key="#[vars.idempotencyKey]" objectStore="idempotency-store" target="prior"/>
+      <choice>
+        <when expression="#[vars.prior.bodyHash != write(payload, 'application/json')]">
+          <set-variable variableName="httpStatus" value="409"/>
+          <set-payload value='#[output application/json --- { errorCode: "IDEMPOTENCY_CONFLICT", orderId: vars.prior.orderId }]'/>
+        </when>
+        <otherwise>
+          <set-variable variableName="httpStatus" value="200"/>
+          <os:retrieve key="#[vars.prior.orderId]" objectStore="jobs-store"/>
+          <set-payload value="#[output application/json --- payload]"/>
+        </otherwise>
+      </choice>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <flow-ref name="create-order-intent"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+
+  <sub-flow name="create-order-intent">
+    <set-variable variableName="orderId" value="#[uuid()]"/>
+    <set-variable variableName="amount" value="#[payload.amount as Number]"/>
+    <set-variable variableName="status" value="#[if (vars.amount &gt; 50000) 'PENDING_APPROVAL' else 'PENDING']"/>
+    <set-variable variableName="order" value="#[output application/java --- {
+      orderId: vars.orderId,
+      idempotencyKey: vars.idempotencyKey,
+      status: vars.status,
+      amount: vars.amount,
+      paymentToken: payload.paymentToken,
+      lines: payload.lines default [],
+      wmsReservationId: null,
+      pspAuthId: null,
+      sfOrderId: null,
+      history: [now() as String ++ ' ' ++ vars.status]
+    }]"/>
+    <os:store key="#[vars.orderId]" objectStore="jobs-store">
+      <os:value><![CDATA[#[vars.order]]]></os:value>
+    </os:store>
+    <os:store key="#[vars.idempotencyKey]" objectStore="idempotency-store">
+      <os:value><![CDATA[#[output application/java --- { orderId: vars.orderId, bodyHash: write(payload, 'application/json') }]]]></os:value>
+    </os:store>
+    <choice>
+      <when expression="#[vars.status == 'PENDING']">
+        <vm:publish queueName="order-saga" config-ref="VM_Config">
+          <vm:content><![CDATA[#[vars.order]]]></vm:content>
+        </vm:publish>
+      </when>
+    </choice>
+    <set-variable variableName="httpStatus" value="202"/>
+    <set-payload value="#[output application/json --- { orderId: vars.orderId, status: vars.status }]"/>
+  </sub-flow>
+
+  <flow name="exp-get-order">
+    <http:listener config-ref="http-listener-config" path="/api/v1/orders/{id}" allowedMethods="GET"/>
+    <os:retrieve key="#[attributes.uriParams.id]" objectStore="jobs-store"/>
+    <set-payload value="#[output application/json --- payload]"/>
+  </flow>
+
+  <flow name="exp-approve-order">
+    <http:listener config-ref="http-listener-config" path="/api/v1/orders/{id}/approve" allowedMethods="POST">
+      <http:response statusCode="202"/>
+    </http:listener>
+    <os:retrieve key="#[attributes.uriParams.id]" objectStore="jobs-store" target="order"/>
+    <set-variable variableName="order" value="#[vars.order ++ { status: 'PENDING' }]"/>
+    <os:store key="#[attributes.uriParams.id]" objectStore="jobs-store">
+      <os:value><![CDATA[#[vars.order]]]></os:value>
+    </os:store>
+    <vm:publish queueName="order-saga" config-ref="VM_Config">
+      <vm:content><![CDATA[#[vars.order]]]></vm:content>
+    </vm:publish>
+    <set-payload value="#[output application/json --- { orderId: attributes.uriParams.id, status: 'PENDING' }]"/>
+  </flow>
+
+  <flow name="exp-release-stock">
+    <http:listener config-ref="http-listener-config" path="/api/v1/internal/compensations/release-stock" allowedMethods="POST">
+      <http:response statusCode="200"/>
+    </http:listener>
+    <http:request method="POST" config-ref="http-request-config" path="/sys/wms/release">
+      <http:body><![CDATA[#[payload]]]></http:body>
+    </http:request>
+  </flow>
+</mule>

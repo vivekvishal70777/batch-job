@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+  <flow name="sys-salesforce-customer">
+    <http:listener config-ref="http-listener-config" path="/sys/salesforce/customers/{id}" allowedMethods="GET"/>
+    <set-payload value="#[output application/json --- { id: attributes.uriParams.id, name: 'Asha Rao', email: 'redacted', source: 'salesforce' }]"/>
+  </flow>
+
+  <flow name="sys-sap-billing">
+    <http:listener config-ref="http-listener-config" path="/sys/sap/billing/{id}" allowedMethods="GET"/>
+    <!-- Simulated slow SAP; projector still not on the 5k RPS GET path. -->
+    <set-payload value="#[output application/json --- { id: attributes.uriParams.id, balance: 120.50, currency: 'INR', source: 'sap' }]"/>
+  </flow>
+
+  <flow name="sys-loyalty-customer">
+    <http:listener config-ref="http-listener-config" path="/sys/loyalty/customers/{id}" allowedMethods="GET"/>
+    <choice>
+      <when expression="#[attributes.uriParams.id == 'slow']">
+        <logger level="INFO" message="Loyalty sleep simulation via timeout on caller"/>
+        <set-payload value="#[output application/json --- { id: attributes.uriParams.id, points: 0 }]"/>
+      </when>
+      <otherwise>
+        <set-payload value="#[output application/json --- { id: attributes.uriParams.id, points: 420, tier: 'GOLD' }]"/>
+      </otherwise>
+    </choice>
+  </flow>
+</mule>

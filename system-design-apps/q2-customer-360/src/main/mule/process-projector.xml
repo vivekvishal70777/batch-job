@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <!-- Projector: scatter-gather off the hot path. Loyalty is optional with a short timeout. -->
+  <flow name="prc-project-customer">
+    <http:listener config-ref="http-listener-config" path="/api/v1/internal/project/{id}" allowedMethods="POST">
+      <http:response statusCode="200"/>
+    </http:listener>
+    <set-variable variableName="customerId" value="#[attributes.uriParams.id]"/>
+    <scatter-gather>
+      <route>
+        <http:request method="GET" config-ref="http-request-config" path="#['/sys/salesforce/customers/' ++ vars.customerId]" responseTimeout="2000"/>
+      </route>
+      <route>
+        <http:request method="GET" config-ref="http-request-config" path="#['/sys/sap/billing/' ++ vars.customerId]" responseTimeout="3000"/>
+      </route>
+      <route>
+        <try>
+          <http:request method="GET" config-ref="http-request-config" path="#['/sys/loyalty/customers/' ++ vars.customerId]" responseTimeout="80"/>
+          <error-handler>
+            <on-error-continue type="HTTP:TIMEOUT,HTTP:CONNECTIVITY,MULE:ANY">
+              <set-payload value="#[output application/java --- { unavailable: true }]"/>
+            </on-error-continue>
+          </error-handler>
+        </try>
+      </route>
+    </scatter-gather>
+    <set-variable variableName="projection" value="#[output application/java --- {
+      id: vars.customerId,
+      crm: payload[0].payload default {},
+      billing: payload[1].payload default {},
+      billingStale: false,
+      loyalty: if ((payload[2].payload.unavailable default false) or payload[2].payload == null) null else payload[2].payload,
+      loyaltyUnavailable: (payload[2].payload.unavailable default false),
+      asOf: now() as String
+    }]"/>
+    <os:store key="#['cust:' ++ vars.customerId ++ ':v1']" objectStore="cache-store">
+      <os:value><![CDATA[#[vars.projection]]]></os:value>
+    </os:store>
+    <set-payload value="#[output application/json --- vars.projection]"/>
+  </flow>
+</mule>

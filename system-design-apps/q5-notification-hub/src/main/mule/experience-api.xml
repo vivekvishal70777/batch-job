@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <flow name="exp-post-notification">
+    <http:listener config-ref="http-listener-config" path="/api/v1/notifications" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 202]"/>
+    </http:listener>
+    <set-variable variableName="dedupKey" value="#[(payload.correlationId default uuid()) ++ '|' ++ (payload.templateId default 'none')]"/>
+    <try>
+      <os:retrieve key="#[vars.dedupKey]" objectStore="idempotency-store"/>
+      <set-variable variableName="httpStatus" value="200"/>
+      <set-payload value="#[output application/json --- payload]"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-variable variableName="notificationId" value="#[uuid()]"/>
+          <set-variable variableName="msg" value="#[output application/java --- payload ++ { notificationId: vars.notificationId, status: 'ACCEPTED' }]"/>
+          <os:store key="#[vars.dedupKey]" objectStore="idempotency-store">
+            <os:value><![CDATA[#[output application/java --- { notificationId: vars.notificationId, status: 'ACCEPTED' }]]]></os:value>
+          </os:store>
+          <vm:publish queueName="notifications" config-ref="VM_Config">
+            <vm:content><![CDATA[#[vars.msg]]]></vm:content>
+          </vm:publish>
+          <set-payload value="#[output application/json --- { notificationId: vars.notificationId, status: 'ACCEPTED' }]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+</mule>

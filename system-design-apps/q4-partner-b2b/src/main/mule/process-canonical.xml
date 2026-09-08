@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <flow name="prc-canonical-order">
+    <vm:listener queueName="canonical-orders" config-ref="VM_Config"/>
+    <set-variable variableName="canonical" value="#[payload]"/>
+    <logger level="INFO" message="#['Canonical order partner=' ++ vars.canonical.partnerId ++ ' po=' ++ (vars.canonical.poNumber default '') ++ ' channel=' ++ vars.canonical.channel]"/>
+    <http:request method="POST" config-ref="http-request-config" path="/sys/erp/orders">
+      <http:body><![CDATA[#[output application/json --- vars.canonical]]]></http:body>
+    </http:request>
+    <os:store key="#[vars.canonical.partnerId ++ '|' ++ (vars.canonical.poNumber default uuid())]" objectStore="jobs-store">
+      <os:value><![CDATA[#[output application/java --- vars.canonical ++ { erpStatus: 'POSTED', erp: payload }]]]></os:value>
+    </os:store>
+  </flow>
+</mule>

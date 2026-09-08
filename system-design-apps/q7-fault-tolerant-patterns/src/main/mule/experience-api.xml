@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <!-- Edge: 429 when circuit is open. Idempotent accept. -->
+  <flow name="exp-submit-work">
+    <http:listener config-ref="http-listener-config" path="/api/v1/work" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 202]"/>
+    </http:listener>
+    <try>
+      <os:retrieve key="circuit" objectStore="cache-store" target="circuit"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-variable variableName="circuit" value="#[output application/java --- { open: false, failures: 0 }]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+    <choice>
+      <when expression="#[vars.circuit.open default false]">
+        <set-variable variableName="httpStatus" value="429"/>
+        <set-payload value='#[output application/json --- { errorCode: "CIRCUIT_OPEN", message: "Dependency down; retry later" }]'/>
+      </when>
+      <otherwise>
+        <set-variable variableName="workId" value="#[payload.workId default uuid()]"/>
+        <try>
+          <os:retrieve key="#[vars.workId]" objectStore="idempotency-store"/>
+          <set-variable variableName="httpStatus" value="200"/>
+          <set-payload value="#[output application/json --- payload]"/>
+          <error-handler>
+            <on-error-continue type="OS:KEY_NOT_FOUND">
+              <os:store key="#[vars.workId]" objectStore="idempotency-store">
+                <os:value><![CDATA[#[output application/java --- { workId: vars.workId, status: 'ACCEPTED' }]]]></os:value>
+              </os:store>
+              <vm:publish queueName="work" config-ref="VM_Config">
+                <vm:content><![CDATA[#[output application/java --- payload ++ { workId: vars.workId, attempts: 0 }]]]></vm:content>
+              </vm:publish>
+              <set-payload value="#[output application/json --- { workId: vars.workId, status: 'ACCEPTED' }]"/>
+            </on-error-continue>
+          </error-handler>
+        </try>
+      </otherwise>
+    </choice>
+  </flow>
+</mule>

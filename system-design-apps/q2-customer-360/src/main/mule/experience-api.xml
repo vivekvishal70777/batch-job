@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <!-- Hot path: read model only. Do not scatter-gather SAP on GET. -->
+  <flow name="exp-get-customer">
+    <http:listener config-ref="http-listener-config" path="/api/v1/customers/{id}" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+    </http:listener>
+    <set-variable variableName="customerId" value="#[attributes.uriParams.id]"/>
+    <set-variable variableName="fields" value="#[attributes.queryParams.fields default 'all']"/>
+    <os:retrieve key="#['cust:' ++ vars.customerId ++ ':v1']" objectStore="cache-store"/>
+    <choice>
+      <when expression="#[vars.fields != 'all']">
+        <set-payload value="#[output application/json --- payload filterObject ((v, k) -&gt; k == 'id' or k == 'asOf' or (vars.fields as String splitBy ',') contains k)]"/>
+      </when>
+      <otherwise>
+        <set-payload value="#[output application/json --- payload]"/>
+      </otherwise>
+    </choice>
+  </flow>
+
+  <flow name="exp-erase-customer">
+    <http:listener config-ref="http-listener-config" path="/api/v1/customers/{id}/erase" allowedMethods="POST">
+      <http:response statusCode="204"/>
+    </http:listener>
+    <try>
+      <os:remove key="#['cust:' ++ attributes.uriParams.id ++ ':v1']" objectStore="cache-store"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND"/>
+      </error-handler>
+    </try>
+    <set-payload value="#[null]"/>
+  </flow>
+</mule>

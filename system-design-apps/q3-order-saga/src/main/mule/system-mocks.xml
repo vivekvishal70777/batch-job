@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+  <flow name="sys-wms-reserve">
+    <http:listener config-ref="http-listener-config" path="/sys/wms/reserve" allowedMethods="POST"/>
+    <set-payload value="#[output application/json --- { reservationId: 'wms-' ++ uuid(), orderId: payload.orderId }]"/>
+  </flow>
+  <flow name="sys-wms-release">
+    <http:listener config-ref="http-listener-config" path="/sys/wms/release" allowedMethods="POST"/>
+    <set-payload value='#[output application/json --- { released: true }]'/>
+  </flow>
+  <flow name="sys-wms-notify">
+    <http:listener config-ref="http-listener-config" path="/sys/wms/notify" allowedMethods="POST"/>
+    <set-payload value='#[output application/json --- { notified: true }]'/>
+  </flow>
+  <flow name="sys-psp-authorize">
+    <http:listener config-ref="http-listener-config" path="/sys/psp/authorize" allowedMethods="POST"/>
+    <set-payload value="#[output application/json --- { authId: 'auth-' ++ uuid(), tokenUsed: payload.paymentToken, panStored: false }]"/>
+  </flow>
+  <flow name="sys-psp-void">
+    <http:listener config-ref="http-listener-config" path="/sys/psp/void" allowedMethods="POST"/>
+    <set-payload value='#[output application/json --- { voided: true }]'/>
+  </flow>
+  <flow name="sys-salesforce-orders">
+    <http:listener config-ref="http-listener-config" path="/sys/salesforce/orders" allowedMethods="POST"/>
+    <set-payload value="#[output application/json --- { sfOrderId: 'SF-' ++ payload.orderId }]"/>
+  </flow>
+</mule>

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:file="http://www.mulesoft.org/schema/mule/file"
+      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <configuration-properties file="config.yaml"/>
+  <global-property name="env" value="dev"/>
+  <configuration defaultErrorHandler-ref="global-error-handler"/>
+
+  <http:listener-config name="http-listener-config">
+    <http:listener-connection host="${http.listener.host}" port="${http.listener.port}"/>
+  </http:listener-config>
+
+  <http:request-config name="http-request-config">
+    <http:request-connection host="localhost" port="${http.listener.port}"/>
+  </http:request-config>
+
+  <validation:config name="validation-config"/>
+
+  <file:config name="file-config">
+    <file:connection workingDir="${app.home}"/>
+  </file:config>
+
+  <os:config name="ObjectStore_Config"/>
+  <os:object-store name="jobs-store" persistent="true" maxEntries="10000"/>
+  <os:object-store name="inventory-store" persistent="true" maxEntries="100000"/>
+  <os:object-store name="reject-store" persistent="true" maxEntries="100000"/>
+  <os:object-store name="idempotency-store" persistent="true" maxEntries="50000"/>
+  <os:object-store name="cache-store" persistent="false" entryTtl="15" entryTtlUnit="MINUTES" maxEntries="50000"/>
+  <os:object-store name="watermark-store" persistent="true" maxEntries="1000"/>
+  <os:object-store name="outbox-store" persistent="true" maxEntries="100000"/>
+
+  <vm:config name="VM_Config">
+    <vm:queues>
+      <vm:queue queueName="ingest-jobs" queueType="PERSISTENT"/>
+      <vm:queue queueName="pos-deltas" queueType="PERSISTENT"/>
+      <vm:queue queueName="analytics-outbox" queueType="PERSISTENT"/>
+      <vm:queue queueName="order-saga" queueType="PERSISTENT"/>
+      <vm:queue queueName="canonical-orders" queueType="PERSISTENT"/>
+      <vm:queue queueName="notifications" queueType="PERSISTENT"/>
+      <vm:queue queueName="sap-pages" queueType="PERSISTENT"/>
+      <vm:queue queueName="work" queueType="PERSISTENT"/>
+      <vm:queue queueName="dlq" queueType="PERSISTENT"/>
+    </vm:queues>
+  </vm:config>
+</mule>

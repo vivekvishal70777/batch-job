@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+  <!-- Mock SAP behind a private path. No public inbound to ECC. -->
+  <flow name="sys-sap-documents">
+    <http:listener config-ref="http-listener-config" path="/sys/sap/documents" allowedMethods="GET"/>
+    <set-variable variableName="after" value="#[(attributes.queryParams.after default '0') as Number]"/>
+    <set-variable variableName="limit" value="#[(attributes.queryParams.limit default '50') as Number]"/>
+    <set-payload value="#[output application/json --- do {
+      var start = vars.after + 1
+      var records = (1 to vars.limit) map (i) -&gt; { docNumber: start + i - 1, amount: 10 * i, companyCode: '1000' }
+      var last = start + vars.limit - 1
+      ---
+      { records: records, hasMore: last &lt; 120, nextAfter: last }
+    }]"/>
+  </flow>
+</mule>

@@ -1,402 +1,581 @@
-# MuleSoft System Design Q&A (plain English)
+# MuleSoft System Design Interview — Questions and Answers
 
-This is a **question-and-answer guide** for MuleSoft architect / senior integration interviews.
+Standard 45–60 minute system design round for **MuleSoft Integration Architect / Senior Integration Engineer**.
 
-It is written in everyday language first. Technical names are added only after the idea is clear.
+Each problem is answered in interview order:
 
-**How this was built**
+1. Clarify  
+2. Requirements  
+3. High-level design  
+4. APIs and data  
+5. Deep dive  
+6. Failures and scale  
+7. Trade-offs  
 
-- **Job openings** (typical 2025–2026 architect/engineer JDs): Accenture MuleSoft Architect, Application Integration Architect (Anypoint), MuleSoft Integration Architect (India and US), Integration Engineer roles. They keep asking for: API-led design, Salesforce/SAP/database/file connections, CloudHub or hybrid, OAuth and API Manager, batch and messaging, CI/CD, monitoring, and explaining design to business people.
-- **Past interview questions** reported by candidates and trainers: “design customer sync,” “50k SFTP files,” “order flow,” “notification hub,” “wrap a mainframe,” “make it fault-tolerant,” “design the whole platform,” plus TCS/consulting screens on CloudHub vs Runtime Fabric, Object Store, async processing, and API-led layers.
-- **This repo’s real work:** a nightly-style **file ingest** (HTTP start → SFTP CSV → validate → database → email summary). Several answers use that as the example so the guide matches real Mule 4 batch work.
-
-Use **one design story** in a 45–60 minute round. Use the short Q&A for screens.
-
----
-
-## 1. What these jobs actually want
-
-Hiring managers are not asking you to recite RAML. They want someone who can:
-
-| Job-ad phrase | What they mean in plain words |
-|---------------|-------------------------------|
-| API-led connectivity | Do not wire Salesforce straight to the mobile app. Put reusable “doors” in between. |
-| Experience / Process / System APIs | Front door for each channel; kitchen that cooks the business process; back door to each old system. |
-| HLD / LLD | Big picture for leaders, then a detailed flow for builders. |
-| CloudHub / Runtime Fabric / hybrid | Where the app runs: MuleSoft’s cloud, your Kubernetes, or next to SAP in the data center. |
-| OAuth 2.0, JWT, API policies | Who is allowed in, and how you stop one partner from flooding you. |
-| Batch, SFTP, Salesforce, SAP, DB | The actual systems you will touch every week. |
-| Anypoint MQ / JMS / Kafka | A waiting line so you do not do heavy work while the user is still on the phone. |
-| CI/CD, MUnit, Exchange | Ship safely, test, and reuse instead of copying flows. |
-| Monitoring, HA, performance | When it breaks at 2 a.m., can ops see it and can it survive one machine dying? |
-
-If you only talk connectors, you sound like a developer. If you only talk layers and never mention retries, files, or Salesforce limits, you sound like a slide deck. **Jobs want both.**
+Draw while you talk. Name alternatives and why you rejected them.
 
 ---
 
-## 2. Simple words for MuleSoft ideas
+## Interview method (use this on every question)
 
-| Fancy word | Layman meaning |
-|------------|----------------|
-| **API** | A documented way for one program to ask another for data or to do a job. |
-| **System API** | A polite wrapper around one system (Salesforce, SAP, SQL). Others should not speak SAP dialect. |
-| **Process API** | The business recipe: “place an order,” “sync a customer.” |
-| **Experience API** | The shape mobile / web / partner needs. Same process, different packaging. |
-| **Synchronous** | Wait on the line until the answer comes back. |
-| **Asynchronous** | Take a ticket, hang up, we text you when done. |
-| **Queue (Anypoint MQ)** | A numbered waiting line. Workers pick items when they are free. |
-| **Idempotent** | Doing the same request twice does not charge the card twice. |
-| **Watermark** | A bookmark: “we already processed up to this invoice number.” |
-| **Dead letter / reject table** | The junk drawer for records that keep failing, so they do not block everyone else. |
-| **Object Store** | A small sticky-note pad. Fine for a bookmark or a short-lived “already seen” flag. **Not** a bank ledger or a queue. |
-| **vCore / worker** | How much computer MuleSoft rents for your app. |
-| **CloudHub** | MuleSoft hosts the computers. |
-| **Runtime Fabric (RTF)** | You host the computers (often in your data center). |
-| **API Manager policy** | A bouncer at the door: login check, speed limit, block bad IPs. |
-| **Batch job** | Chop a huge file into rows, process in chunks, keep good and bad rows apart. |
-| **Streaming** | Read the file like a tap, not like dumping a swimming pool into memory. |
+**Clarify (2–3 min)**  
+Who calls us? Sync or async? Volume? SLA? Systems of record? Failure budget (lose data vs delay)?
 
----
+**Requirements (3 min)**  
+Write functional and non-functional on the board. Get the interviewer to nod.
 
-## 3. Short Q&A from job screens and past interviews
+**High-level (10 min)**  
+Boxes: clients, Experience API, Process API, System APIs, queues, stores, Salesforce/SAP/DB/SFTP. Arrows labeled with protocol.
 
-These show up in **TCS / Accenture / product** screens and in “my 12 MuleSoft interviews” write-ups. Answer in two layers: **simple**, then **if they go deeper**.
+**Deep dive (20 min)**  
+One or two hotspots: idempotency, fan-out, batch memory, Salesforce limits, compensations.
+
+**Wrap (5 min)**  
+Top 3 risks, MVP vs later, how you would monitor.
+
+**Bar**
+
+| Level | What it looks like |
+|-------|--------------------|
+| No | Connector list, happy path only |
+| Hire | Layers + async boundary + idempotency + reject path + runtime choice |
+| Strong | Control table, backpressure, dual-sink consistency, runbook, vCore budget |
 
 ---
 
-### Q1. What is API-led connectivity, and when would you skip a layer?
+# Question 1 — High-volume file ingestion
 
-**Simple answer.**  
-Think of a restaurant. **System APIs** are the suppliers (farm, bakery). **Process APIs** are the kitchen (the recipe). **Experience APIs** are the waiters (mobile app, partner portal, call center each get a different plate). If every waiter walks into the farm, you cannot change the farm without breaking the app.
+### Prompt
 
-**Skip a layer when** there is only one consumer and one system for the next year, or it is a one-off nightly file with no other callers. Do not skip layers just to save a little hosting cost if three channels will share “create order.”
+A retailer drops inventory CSV files on SFTP every night (10k–20M rows). POS also posts small JSON deltas over HTTPS. Downstream: SQL Server (store operations) and Salesforce Data Cloud (analytics). Ops needs success/fail reporting and email. Design the MuleSoft solution.
 
-**Jobs ask this because** every architect JD lists Experience / Process / System.
-
----
-
-### Q2. Sync vs async: a partner dumps 50,000 invoices at 9 a.m.
-
-**Simple answer.**  
-Do not cook 50,000 invoices while they wait on the phone. The public API should only say: “We got your bundle. Here is ticket **#B-123**. Check status here.” Heavy work happens in a waiting line.
-
-**Deeper.** Return HTTP **202**. Save a job record. Put work on a queue. Status API: `GET /jobs/B-123`. Same ticket id in logs.
-
-**Past question source.** High-volume ingest and “how would you implement asynchronous processing” (common consulting screen).
+This is the most common MuleSoft design question (batch + SFTP + DB). It matches typical job ads and this style of production pipeline.
 
 ---
 
-### Q3. CloudHub vs Runtime Fabric vs on-prem. Where do you put what?
+### 1. Clarify
 
-**Simple answer.**
+Ask:
 
-- **Public bursty APIs** → CloudHub (easy to add machines).
-- **SAP locked in the office, no inbound internet** → private network to CloudHub, **or** a small Mule next to SAP that only talks **out** to a queue.
-- **Card numbers (PCI)** → keep that data in a locked room (RTF/on-prem) and send only tokens to the cloud.
-- **Nightly 2-hour file job** → a dedicated worker so it does not slow the mobile API.
+- File complete signal (`.done` file vs size stable vs ops HTTP start)?  
+- Duplicate SKUs across files — last write wins or sum?  
+- Must analytics match SQL in the same second?  
+- Partial file (writer still uploading)?  
+- Replay requirement?  
+- PII in the file?
 
-**Jobs ask this because** JDs list CloudHub, RTF, and hybrid in the same bullet.
-
----
-
-### Q4. Object Store vs queue vs database?
-
-**Simple answer.**
-
-- **Queue:** “please process this event.”
-- **Database:** “this payment id is the truth; do not insert twice.”
-- **Object Store:** “we last ran at bookmark X” or “we saw this key in the last day.”
-
-If you use Object Store as a queue, notes expire, you cannot inspect a backlog easily, and two workers will fight. Money and audit never live only on sticky notes.
-
-**Past question:** “Explain the use of Object Store” (Hirist / product screens).
+**Assume unless told otherwise:** last-write-wins on `SKU + StoreId` using row timestamp; SQL is operational truth; analytics may lag; HTTP start or scheduler; replay must not double-count.
 
 ---
 
-### Q5. How do you handle a huge CSV (gigabytes) without crashing?
+### 2. Requirements
 
-**Simple answer.**  
-Read it like a **stream** (row by row). Validate each row. Write **good rows** to one table in small groups. Write **bad rows** to a reject table. Email **one summary**, not 20,000 emails.
+**Functional**
 
-Memory explodes if you turn the whole file into one giant JSON list in RAM.
+- Ingest CSV from SFTP and POS JSON.  
+- Validate rows; persist good and bad separately.  
+- Upsert operational inventory.  
+- Feed analytics.  
+- Job status and one summary email.  
+- Safe replay.
 
-**Past question:** “Bank receives tens of thousands of files / high-volume file processing.” Also matches this repo’s ingest pipeline.
+**Non-functional**
 
----
+- 20M rows in a night window (~2 hours).  
+- Memory must not load 4 GB as one array.  
+- At-least-once processing with **exactly-once effects** (upsert).  
+- Availability: two workers, but **single claim** per file.  
+- Security: SFTP keys in secrets; no payload in logs.
 
-### Q6. On Error Continue vs Propagate?
+**Capacity (back of envelope)**
 
-**Simple answer.**
-
-- **Propagate** = the dish is ruined; send it back to the kitchen (the record fails). Use for database and file failures.
-- **Continue** = the side salad failed; the main meal is still served. Use for “we could not send the email” **after** data is already saved.
-
-If you Continue on a failed database insert, the batch **looks successful**. That is a lie.
-
----
-
-### Q7. How do you secure APIs? (every JD)
-
-**Simple answer.**  
-Bouncer at the gate (**API Manager**): client id, OAuth, speed limit, IP allow list. Inside the restaurant: still check “this user may see **this** customer.” Passwords live in a secret vault, not in the project file. Logs show a **tracking id**, not the customer’s email or card.
+- 20M × 200 bytes ≈ 4 GB file.  
+- Aggregator 500 rows × 8 threads ≈ 4k rows in flight, not 20M.  
+- Target 10k–30k rows/s into SQL → ~10–30 minutes CPU/DB bound.
 
 ---
 
-### Q8. How do you keep the system up? (HA / scale)
+### 3. High-level design
 
-**Simple answer.**  
-Run **two copies** of each important API so one can die. Do not store “who is logged in” only in one machine’s memory. For files, **do not** let two copies grab the same file — first **claim** it in a table (like taking a number).
+```
+Ops / Scheduler                    POS devices
+       |                                |
+       v                                v
+ POST /ingestion/jobs              POST /pos/deltas
+ (Experience: kickoff)             (Experience: small, 202)
+       |                                |
+       v                                v
+  Job control DB                    Anypoint MQ
+  (claim file, checksum)                |
+       |                                |
+       v                                v
+ Process: Inventory Ingest ----------------+
+       |                                   |
+       |  stream CSV / consume MQ          |
+       |  validate                         |
+       +---> SQL Server upsert (source of truth)
+       +---> outbox --> MQ --> Data Cloud loader
+       +---> reject table
+       +---> on-complete email
+```
 
-Adding machines **hurts** SFTP if both delete the same file.
+**API-led**
 
----
+| Layer | App | Why |
+|-------|-----|-----|
+| Experience | Kickoff + POS + job status | Auth, partner/store identity, 202 |
+| Process | Ingest + validation + fan-out | Business rules, job lifecycle |
+| System | SFTP, SQL, Data Cloud, Email | One system each |
 
-### Q9. Salesforce has a daily API limit. Mobile needs fast customer view.
-
-**Simple answer.**  
-Do not call Salesforce on every screen refresh. Keep a **local copy** (cache or small database) filled by Salesforce events. Mobile reads the copy. Save Salesforce calls for writes and rare repairs.
-
-**Past question:** real-time customer sync + “design for scale.”
-
----
-
-### Q10. CI/CD — what does “good” look like on a JD?
-
-**Simple answer.**  
-Build → automated tests (MUnit) → deploy to dev with **dev** secrets → promote the API contract → prod with **prod** secrets. Never copy production SFTP passwords into a developer laptop config.
-
----
-
-## 4. The seven system design stories interviewers keep using
-
-These seven match a widely circulated **MuleSoft system design** set (customer sync, big files, orders, notifications, legacy wrap, fault tolerance, enterprise platform). Answers are in layman language. Each one maps to bullets on architect JDs.
-
-How to answer any of them in 10 minutes:
-
-1. Restate the goal and who waits (human vs overnight job).  
-2. Draw boxes: channel → process → each system.  
-3. Say what is **wait-on-the-phone** vs **ticket**.  
-4. Say what happens when a step fails.  
-5. Say how ops **replays** without doubling money or stock.
+**Rejected:** one mega-flow; SFTP listener only (partial files); XA to SQL + Data Cloud.
 
 ---
 
-### Design 1 — Real-time customer sync (Salesforce → SAP, warehouse, analytics)
+### 4. APIs and data
 
-**The story.** A customer is created or updated in Salesforce. SAP, a warehouse app, and a reporting system must catch up.
+**Kickoff**
 
-**Layman design.**
+```
+POST /ingestion/jobs
+Authorization: Bearer
+Body: { "path": "/inbox/inv.csv", "source": "NIGHTLY" }
+→ 202 { "jobId": "b-9f3", "status": "ACCEPTED" }
 
-- Salesforce shouts “customer changed” (platform event or similar).
-- Mule **System API** for Salesforce only knows Salesforce.
-- A **Process** “customer sync” turns that into a common “customer” shape.
-- Three **System APIs** update SAP, warehouse, analytics. Do **not** put SAP field names in the Salesforce listener.
+GET /ingestion/jobs/{jobId}
+→ { "status": "RUNNING|SUCCEEDED|FAILED", "loaded": 19920000, "rejected": 8000 }
+```
 
-**If Salesforce is down or slow.** Put events on a **queue**. Bookmark Salesforce’s last event so you can replay. If analytics can wait an hour, do not block SAP on analytics.
+**POS**
 
-**Duplicates.** Same customer update may arrive twice. Upsert by customer number. Database unique key beats “hope the queue is exactly once.”
+```
+POST /pos/deltas
+Idempotency-Key: uuid
+Body: { "sku", "storeId", "qty", "eventTs" }
+→ 202 { "accepted": true }
+```
 
-**Job link.** Salesforce integration is on almost every senior JD.
+**Tables**
 
----
+```
+ingest_job(job_id PK, path, checksum UNIQUE, status, claimed_by, loaded, rejected, started_at, finished_at)
 
-### Design 2 — High-volume files (SFTP, tens of thousands of rows or files)
+inventory(sku, store_id, qty, event_ts, source, job_id)
+  PRIMARY KEY (sku, store_id)
 
-**The story.** A bank or retailer drops CSV files. Validate, keep failures aside, load the rest.
+ingest_reject(job_id, row_num, payload, error_code, error_msg)
+```
 
-**Layman design.** (Same idea as this repo.)
-
-1. Do not start while the file is still uploading. Wait for a “done” file, or start from a **button/API** that ops controls.  
-2. Give the run a **job id** (a ticket).  
-3. Read as a stream.  
-4. Good rows → database in bunches. Bad rows → reject table with the reason.  
-5. One email: “12,000 loaded, 80 rejected, job B-123.”  
-6. Move the file to an archive **only after** the database write is done.  
-7. Replay is safe because you **update if the row already exists**, or you skip a file with the same fingerprint (checksum).
-
-**If two stores send conflicting stock.** Believe the **newer timestamp inside the file**, not “whoever arrived last in the inbox.”
-
-**Job link.** Batch, SFTP, database connectors, error handling, notifications.
-
----
-
-### Design 3 — Order from website: stock, pay, ERP, notify
-
-**The story.** Website places an order. Check stock, take payment, create order in ERP/Salesforce, email the customer.
-
-**Layman design.**
-
-- Website talks to an **Experience** API: “place order,” with a **repeat-safe key** (if they double-click, one order).
-- Save “we intend to place this order” in **your** database first (the notebook).
-- Then, in order: reserve stock → pay (token, never raw card) → create in ERP → notify.
-- If pay works and ERP is down, **do not forget** the order. Put “create in ERP” on a queue and retry. That notebook pattern is an **outbox**.
-
-**If stock API is not repeat-safe.** Keep your own “we already reserved for order 99” row. On retry, skip a second reserve.
-
-**If the amount is huge.** Pause for a human “approve” instead of taking money immediately.
-
-**Job link.** Process orchestration, Salesforce/ERP, async, security.
+Upsert rule: update row only if `incoming.event_ts >= inventory.event_ts`.
 
 ---
 
-### Design 4 — One notification hub (email, SMS, Teams, Slack)
+### 5. Deep dive
 
-**The story.** Every app wants to send messages. You do not want 20 copies of the email connector.
+**File completeness**  
+Do not delete or parse while size is growing. Require `.done` or two equal size samples N seconds apart, or only start from `POST /ingestion/jobs`.
 
-**Layman design.**
+**Streaming + batch**  
+SFTP read with CSV streaming. Mule batch: validate per record; aggregator bulk-insert; `ONLY_FAILURES` step writes rejects; `maxFailedRecords = -1` so 1% bad does not abort 20M.
 
-- One Process API: `POST /notifications` with “who, what, which channel.”
-- A small routing table: order-failed → email + PagerDuty; marketing → SMS.
-- Each channel is a System API (email, SMS).
-- If email is down, **do not fail the batch that already loaded data**. Log and use a backup channel for ops.
+**Two sinks**  
+SQL commit + **outbox row** in the same SQL transaction (or insert outbox immediately after). Separate worker loads Data Cloud. Analytics SLA hours; store SLA minutes.
 
-**Job link.** Reusable assets, Exchange, not point-to-point.
+**Claim**  
+`UPDATE ingest_job SET claimed_by = worker WHERE claimed_by IS NULL`. Two CloudHub workers cannot process the same file.
 
----
-
-### Design 5 — Wrap a legacy mainframe / SOAP / files for mobile
-
-**The story.** Mobile needs REST. The mainframe only speaks old SOAP or files.
-
-**Layman design.**
-
-- **System API** talks the old dialect. Mobile never sees SOAP.
-- **Experience API** is REST/JSON, paginated, fast timeouts.
-- If the mainframe is slow, **do not** wait on the mobile call. Offer a cached copy or “we will notify you.”
-- Replace the mainframe later by swapping the System API guts; the mobile contract stays. That is the “strangler” idea: wrap first, replace slowly.
-
-**Job link.** Legacy modernization on almost every architect JD.
+**Email**  
+On-complete digest only. Email errors: on-error-continue; page Slack. Do not fail the job after data is loaded.
 
 ---
 
-### Design 6 — Fault-tolerant integration
+### 6. Failures and scale
 
-**The story.** “What if Salesforce or the network dies?”
+| Failure | Detection | Recovery |
+|---------|-----------|----------|
+| Truncated SFTP | Size / `.done` | Wait; quarantine; do not archive |
+| Worker killed | Job `RUNNING` past timeout | Resume or restart; upsert is safe |
+| Replay same file | Unique checksum | Return existing `jobId` unless `force` |
+| Data Cloud slow | Queue depth | SQL already correct; scale loader |
+| Email down | Send error | Continue; secondary alert |
+| Two workers | Claim row | Second worker skips |
 
-**Layman checklist** (say this out loud):
-
-| Problem | What you do |
-|---------|-------------|
-| Blip (timeout) | Retry a few times, wait longer each time, do not retry “bad request.” |
-| Salesforce melting | Stop calling for a while (**circuit breaker**), queue work. |
-| Poison message | After N failures, park it in the junk drawer; do not block all customers. |
-| Worker dies after save, before ack | Database unique key so retry does not double. |
-| You deploy at noon | Finish or safely restart jobs; do not lose the file claim. |
-| Ops needs to see it | One tracking id from the app to Splunk to Salesforce. |
-
-**Past question.** “Design a fault-tolerant architecture” and error-handler drills (`HTTP:TIMEOUT` vs connectivity vs catch-all).
+**Scale:** more batch workers only after claim works. Tune aggregator 200–1000. HTTP listener returns 202; never holds 20M rows.
 
 ---
 
-### Design 7 — Enterprise-wide MuleSoft platform (the “CoE” question)
+### 7. Trade-offs
 
-**The story.** “We have 200 projects. Design the platform.”
+| Choice | Why | Cost |
+|--------|-----|------|
+| HTTP kickoff vs SFTP listener | Control, auth, no partial read | Ops must start or scheduler polls `.done` |
+| Outbox vs dual JDBC | Independent SLAs | Analytics lag |
+| `blockSize=1` + aggregator | Per-row fail vs bulk write | Extra batch overhead |
+| Object Store for claim | Fast | Not multi-region; use DB claim |
 
-**Layman design.**
-
-- **Rules:** every new connection is an API in the catalog (Exchange), not a secret flow on someone’s laptop.
-- **Three layers** as the default; exceptions need a one-pager.
-- **One way to log, one way to name errors, one way to store secrets.**
-- **Environments:** dev / test / prod with different passwords.
-- **Bouncer policies** copied as a template (OAuth + rate limit).
-- **Pipeline** so humans do not click deploy in production on Friday.
-- **Center of excellence:** office hours, reusable DataWeave libraries, “you may not call SAP from an Experience API” as a reviewed rule.
-
-**Job link.** Accenture/Matrix JDs: standards, reusable assets, stakeholder communication, governance.
+**MVP:** SQL + reject + job API + email.  
+**Later:** MQ to Data Cloud, POS path, multi-region active-passive scheduler.
 
 ---
 
-## 5. Extra design Q&A taken from architect job ads
+# Question 2 — Customer 360 (read path)
 
-These are the remaining JD themes that the “famous seven” do not cover well.
+### Prompt
 
----
-
-### Q. SAP is in the data center. MuleSoft is in the cloud. No inbound internet to SAP.
-
-**Answer.** SAP should never be a public website. Build a private road (VPN) into a private CloudHub space, **or** run a small Mule beside SAP that only **pushes** data out to a queue in the cloud. Nightly extract: page through records, save a **bookmark**, if the VPN drops resume from the bookmark — do not start the 2 million rows from zero.
+Mobile and web need `GET /customers/{id}` combining Salesforce CRM, SAP billing, and optional loyalty. p95 &lt; 400 ms. Loyalty may be down. SAP p95 is 1.2 s. Peak 5k RPS. Salesforce 100k API calls/day.
 
 ---
 
-### Q. Two databases: operations SQL Server and analytics (e.g. Data Cloud). Same file.
+### 1. Clarify
 
-**Answer.** Pick **one** system as the live stock number (SQL). Send analytics a copy through a queue. Do not try to write both in one “all or nothing” database transaction. Analytics can be late; the store cannot.
+- Stale billing for 5–15 minutes acceptable?  
+- GDPR erase SLA?  
+- Same graph for IVR later?
 
----
-
-### Q. 2,000 customers of your SaaS, each with their own Salesforce.
-
-**Answer.** One Mule app, many tenants, credentials in a vault per tenant. A fair scheduler so one noisy customer cannot eat all Salesforce calls. Logs always include tenant id, never mix data in support tools.
+**Assume:** slightly stale billing OK; loyalty optional; erase &lt; 60 s.
 
 ---
 
-### Q. How do you version APIs?
+### 2. Requirements
 
-**Answer.** Partners like `/api/v1/` in the URL. You can add new fields without a new version. Removing a field means `v2` and a sunset date. Two mobile versions can share the same Process API underneath.
+**Functional:** one customer profile; partial response if loyalty fails; erase invalidates data.
 
----
+**Non-functional:** p95 400 ms; 5k RPS; stay under Salesforce daily cap; PII not in CDN.
 
-### Q. What do `/live` and `/ready` mean?
-
-**Answer.** **Live:** the process is up. **Ready:** it can take work (database reachable). A batch worker that cannot see SFTP should not claim to be ready. A mobile API should stay ready even if SFTP is down.
+**Capacity:** 5k RPS × 86400 ≈ 432M GETs/day. Salesforce 100k/day → **must not call Salesforce per GET**.
 
 ---
 
-## 6. Talk-track for a 60-minute round (file ingest)
+### 3. High-level design
 
-Jobs that mention **batch + SFTP + database + alerts** love this story. Use it if they say “design a pipeline.”
+Hot path is a **read model**, not scatter-gather to SAP.
 
-| Time | What you say (plain) |
-|------|----------------------|
-| 0–5 | Three layers in one sentence. Cloud vs on-prem in one sentence. |
-| 5–25 | Ticket (job id) → wait until file is complete → stream CSV → good table / reject table → one email. |
-| 25–35 | Partial file: wait for “done.” Two files disagree: newer timestamp wins. |
-| 35–45 | Repeat-safe writes. Email failure does not undo the load. |
-| 45–55 | Two machines must not steal the same file. Do not hold the HTTP call for 20 million rows. |
-| 55–60 | Top risks: duplicate load, memory, analytics vs operations SLA. MVP this quarter vs platform next year. |
+```
+SF CDC / Platform Events --> System API SF --> Process: project Customer360
+SAP IDoc / delta        --> System API SAP --/
+Loyalty events (opt)    --> System API Loy --/
 
-**They should hire you if** you mention a job ticket, a reject pile, a safe replay, and secrets.  
-**They should not** if you only draw connectors and say “we will add more workers.”
+Customer360 store (Redis + SQL)
+        ^
+        |  GET (p95 in-process / Redis)
+Experience: Mobile / Web / later IVR
+```
 
----
-
-## 7. Mini API answers (they often ask you to sketch)
-
-**Start a file job**  
-`POST /ingestion/jobs` → “Accepted, job B-123.” Then `GET /ingestion/jobs/B-123` for counts. Login required. If the same file is already running, say “conflict.”
-
-**Get stock for a SKU**  
-Read the **database**, not SFTP. Cache for half a minute. Private cache (this is store data, not a public CDN).
-
-**Salesforce outbound message**  
-Salesforce only waits ~20 seconds. Save the message and return OK. Process SAP **after**. Salesforce will retry — use the notification id so you do not double-apply.
-
-**Health**  
-Live = process up. Ready = dependencies this app needs.
+**MVP if no CDC yet:** Experience scatter-gather Salesforce + loyalty (short timeout) + **cached** SAP. Still cannot hit SF 5k RPS — cache aggressively.
 
 ---
 
-## 8. Strong vs weak (one page)
+### 4. APIs
 
-| Topic | Strong (say this) | Weak (avoid) |
-|-------|-------------------|--------------|
-| 50k invoices | Ticket + queue | One HTTP call does all 50k |
-| Two sinks | SQL is truth; analytics gets a copy | One giant transaction to both |
-| Object Store | Bookmark / short memory | Use it as a queue or as money records |
-| Retries | A few times, then park | Retry forever |
-| Errors | Reject table + one digest | Email per bad row |
-| Scale | Claim each file | Two workers, same file |
-| SAP | Private path | SAP on the public internet |
-| “Exactly once” | Database unique + upsert | “The queue guarantees it” |
-| Salesforce GET | Read a copy | Hit Salesforce 5,000 times a second |
-| Secrets | Vault per environment | Password in the git repo |
+```
+GET /customers/{id}
+Authorization: user token
+→ 200 {
+    "id", "crm": {...}, "billing": {...} | stale flag,
+    "loyalty": {...} | null,
+    "asOf": "ISO-8601"
+  }
+→ 404, 401
+
+POST /customers/{id}/erase   (internal GDPR)
+→ 204  // delete projection + cache, publish erased
+```
+
+Cache key: `cust:{id}:v1`. TTL 5–15 min **and** explicit delete on CDC/erase.
 
 ---
 
-## 9. Sources (for you, not to quote in the interview)
+### 5. Deep dive
 
-**Job openings (themes, not one company):** MuleSoft Architect / Integration Architect ads asking for Anypoint, API-led HLD/LLD, CloudHub or RTF, OAuth/JWT, Salesforce/SAP/DB/files, MQ/JMS, CI/CD, monitoring, client-facing design.
+- Scatter-gather **on the write/projection path**, not on 5k RPS GET.  
+- Loyalty timeout 50–80 ms; null + `loyaltyUnavailable: true`.  
+- Stampede: single-flight lock or serve stale.  
+- IVR: `?fields=` or a thin Experience over the **same** store.  
+- Circuit breaker around SAP projector, not around mobile GET.
 
-**Past question sets:** system-design lists used in MuleSoft interviews (customer sync, high-volume SFTP, order orchestration, notification framework, legacy wrap, fault tolerance, enterprise platform); consulting screens on API-led layers, Object Store, CloudHub vs RTF, async; candidate write-ups that stress “say why, not only what,” error types, and CloudHub 2.0 vs 1.0 honesty.
+---
 
-**Local project:** HTTP-started CSV ingest, streamed read, batch validate, success/fail aggregators, database, global error handler, email on complete.
+### 6. Failures and scale
+
+- Salesforce 401: pause projector; GET still serves last projection.  
+- Erase: delete SQL row + Redis; do not wait for TTL.  
+- Scale Experience horizontally (stateless). Rate-limit at API Manager per app (mobile vs web).
+
+---
+
+### 7. Trade-offs
+
+Live SAP on GET meets freshness and **misses** p95. Projection meets p95 and **risks** stale billing — show `asOf`. CDN for this resource is wrong (PII).
+
+---
+
+# Question 3 — Place order (saga)
+
+### Prompt
+
+Website places an order: reserve warehouse stock, authorize payment, create Salesforce order, notify warehouse. Any step can fail. Warehouse reserve is **not** idempotent. No PAN in Mule. Orders &gt; $50k need human approval.
+
+---
+
+### 1. Clarify
+
+Capture vs auth-only? Timeout for approval? Can we return 202?
+
+**Assume:** auth then capture on ship; 202 OK; 48 h approval timeout.
+
+---
+
+### 2. Requirements
+
+**Functional:** place, compensate (release stock, void auth), approve high value, never double reserve.
+
+**Non-functional:** at-least-once workers; audit trail; PCI: token only.
+
+---
+
+### 3. High-level design
+
+**Orchestration** (Process API owns the recipe). Choreography is weaker for money + stock.
+
+```
+POST /orders + Idempotency-Key
+  → insert order PENDING + outbox   (DB commit)
+  → 202 { orderId }
+
+Worker (FIFO per orderId):
+  PENDING_APPROVAL if amount > 50k  (wait for POST /orders/{id}/approve)
+  RESERVE WMS      (ledger first)
+  AUTH PSP         (token)
+  CREATE SF        (outbox if SF down)
+  NOTIFY WH
+  COMPLETED
+
+On failure: reverse — void auth, release stock, state COMPENSATED | MANUAL
+```
+
+---
+
+### 4. APIs and data
+
+```
+POST /orders
+Idempotency-Key: required
+Body: { lines[], paymentToken, amount }
+→ 202 { orderId, status }
+
+GET /orders/{id}
+
+POST /orders/{id}/approve     // secured ops/user
+
+POST /internal/compensations/release-stock   // mTLS, saga only
+```
+
+```
+orders(order_id, idempotency_key UNIQUE, status, amount, payment_token, sf_id, ...)
+reservations(order_id PK, wms_reservation_id, status)
+outbox(id, type, payload, published)
+```
+
+Same Idempotency-Key + same body → original order. Same key + different body → 409.
+
+---
+
+### 5. Deep dive
+
+**Non-idempotent WMS:** insert `reservations(order_id)` **before** WMS call. If row exists, skip reserve. Crash after WMS success before ledger: reconcile job lists open WMS reservations.
+
+**Salesforce down 2 h:** outbox `sf_create`; order not COMPLETED until SF ack; payment already authorized — document delayed capture.
+
+**PAN:** hosted fields / PSP.js; Mule stores token only.
+
+---
+
+### 6. Failures
+
+Poison JSON → DLQ + MANUAL. FIFO per `orderId` so steps do not race. HTTP timeout on Experience does not mean failure if intent row exists — client retries with same key.
+
+---
+
+### 7. Trade-offs
+
+Sync 201 after all four systems: simpler UX, holds the request, fails often. 202 + saga: correct for this prompt. XA across WMS/PSP/SF: not available.
+
+---
+
+# Question 4 — Partner B2B (REST + SFTP + EDI)
+
+### Prompt
+
+200 retailers. Some REST, some SFTP CSV, some AS2/EDI 850. All become internal canonical orders. REST SLA 2 s. Files same business day. One partner must not starve others. 7-year signed archive for EDI.
+
+---
+
+### Design
+
+- **Per-channel Experience** (adapter) → **one Process** canonical Order → System APIs (ERP, etc.).  
+- API Manager: **per partner** client-id, SLA, IP allowlist.  
+- Isolation: separate MQ destinations or partition key `partnerId`; spike arrest per client.  
+- Idempotency: `(partnerId, poNumber)` unique. Replay yesterday+today → same order id, 200.  
+- Bad EDI: quarantine raw blob; no guess-repair unless a tested partner quirk.  
+- 7-year non-repudiation: object storage (WORM), not Object Store. Store hash, cert, timestamp.
+
+**Rejected:** 200 Mule apps; shared unbounded HTTP pool.
+
+---
+
+# Question 5 — Notification hub
+
+### Prompt
+
+Many apps need email, SMS, Teams, Slack. Design one reusable MuleSoft service.
+
+---
+
+### Design
+
+```
+POST /notifications
+{ "channel": "email|sms|teams", "to", "templateId", "data", "correlationId" }
+→ 202 { notificationId }
+```
+
+Process routes by channel; System API per provider. Template in Exchange. Caller does not embed SMTP.
+
+**Rule:** notification failure must not fail the **business** job that already committed (on-error-continue + secondary PagerDuty). Deduplicate by `correlationId + templateId`.
+
+This is the reusable-asset question on architect JDs.
+
+---
+
+# Question 6 — Hybrid SAP extract
+
+### Prompt
+
+SAP is in the DC. No inbound internet. MuleSoft is mostly CloudHub 2.0. Nightly 2M-row extract. Design connectivity, HA, resume.
+
+---
+
+### Design
+
+**Path (pick one, say why):**
+
+1. CloudHub 2.0 Private Space + VPN/Direct Connect (cloud-first ops).  
+2. RTF or small on-prem Mule beside SAP, outbound to Anypoint MQ (strictest SAP network).  
+3. Reject: public HTTP to ECC.
+
+**Extract:** delta by document number, not wall-clock watermark (DST). Checkpoint every N pages in DB. VPN drop → resume checkpoint.
+
+**HA:** two tunnels; two System API replicas; competing consumers on MQ. Batch scheduler **active-passive** (one region).
+
+**Secrets:** Secrets Manager; dual-valid password on rotation.
+
+---
+
+# Question 7 — Fault-tolerant platform (checklist question)
+
+### Prompt
+
+How do you design MuleSoft integrations so a dependency outage does not take down the business?
+
+### Answer (board as a table)
+
+| Concern | Pattern |
+|---------|---------|
+| Transient timeout | Retry + jitter; no retry on 4xx except one token refresh |
+| Dependency down | Circuit breaker; queue; degrade (loyalty null) |
+| Poison | Max retries → DLQ / reject table |
+| Duplicate delivery | Idempotency key + DB unique |
+| Worker death | Ack after durable write |
+| Deploy | Drain listeners; persistent batch + upsert |
+| Observe | `correlationId` + `jobId`; alert on lag, not CPU |
+| Edge load | API Manager spike arrest → 429 |
+
+Name error types: `HTTP:TIMEOUT`, `MULE:CONNECTIVITY`, `DB:*`. Catch-all `MULE:ANY` last.
+
+---
+
+# Question 8 — Enterprise API platform (CoE)
+
+### Prompt
+
+200 projects. Design the MuleSoft operating model.
+
+### Answer
+
+- Default: Experience / Process / System; exceptions documented.  
+- Exchange is the catalog; no private laptop integrations to SAP.  
+- Standard policies: OAuth or client-id, rate limit, JSON threat protection.  
+- Shared error format, correlation id, secret pattern.  
+- CI: MUnit → deploy dev → promote API Manager → prod.  
+- vCore budget: isolate batch from Experience.  
+- CoE review for new System APIs (system of record ownership).
+
+Interviewers use this for “architect vs developer.”
+
+---
+
+# Short technical Q&A (screens)
+
+**Q. When do you collapse API-led layers?**  
+A. Single consumer, single system, no reuse in 12 months, or a pure batch firehose. Not to save one vCore if three channels share process logic.
+
+**Q. Object Store vs MQ vs DB?**  
+A. MQ = work to do. DB = money/audit/uniqueness. OS = short TTL cache or bookmark. OS is not a queue (TTL, no DLQ, no competing consumer).
+
+**Q. Continue vs Propagate?**  
+A. Propagate DB/SFTP (business failed). Continue email after successful load. Continue on DB insert hides failure.
+
+**Q. CloudHub vs RTF?**  
+A. CH2 for public elastic APIs. RTF/on-prem for data residency, PCI, or SAP RFC latency. Hybrid: System API near SAP, Process/Experience in CH2.
+
+**Q. Why more workers can make SFTP worse?**  
+A. Both process/delete the same file. Fix: DB claim.
+
+**Q. Salesforce Bulk vs Composite vs CDC?**  
+A. CDC/events for ongoing sync. Bulk 2.0 for nightly tens of thousands. Composite for interactive &lt; 25 records. Never Composite in a 20M loop.
+
+**Q. Watermark?**  
+A. Store source sequence (IDoc, replay id, file checksum) in a **DB** control table. `now()` in Object Store breaks on DST and multi-worker.
+
+---
+
+# 60-minute script (Question 1)
+
+| Min | Activity |
+|-----|----------|
+| 0–5 | Clarify + write NFRs |
+| 5–20 | HLD: job, stream, SQL truth, outbox, rejects |
+| 20–35 | Completeness, claim, upsert, email continue |
+| 35–50 | 20M memory, two workers, Data Cloud lag |
+| 50–60 | Risks + MVP |
+
+**Risks to say:** partial file, duplicate load, analytics vs ops SLA.
+
+---
+
+# Scoring
+
+| Axis | 1 | 3 | 5 |
+|------|---|---|---|
+| Requirements | Jumps to connectors | Lists FR/NFR | Quantifies volume and SLA |
+| Decomposition | One flow | API-led | Clear ownership + async boundary |
+| Data | No keys | Basic mapping | Identity, LWW, upsert |
+| Reliability | Happy path | Retry | Idempotency, DLQ, replay |
+| Scale | More vCores | Pools | Claim, backpressure, 202 |
+| Operability | Logs | Alerts | Job API, SLI lag, runbook |
+
+Pass ≈ 3.5+ average.
+
+---
+
+# What job openings map to which question
+
+| JD bullet | Use question |
+|-----------|----------------|
+| Batch, SFTP, DB, notifications | Q1 |
+| Salesforce + low latency APIs | Q2 |
+| Orchestration, ERP, payments | Q3 |
+| Partners, EDI, API Manager | Q4 |
+| Reusable assets, Exchange | Q5 |
+| Hybrid, SAP, CloudHub/RTF | Q6 |
+| HA, retries, monitoring | Q7 |
+| Governance, HLD/LLD, CoE | Q8 |
